@@ -1,4 +1,3 @@
-
 update_settings(k8s_upsert_timeout_secs=600)
 
 load('ext://helm_resource', 'helm_resource','helm_repo')
@@ -13,15 +12,30 @@ helm_resource(
     namespace='chatapp',
     flags=['--set', 'kraft.enabled=true',
            '--set', 'zookeeper.enabled=true',
-           '--set', 'listeners.client.protocol=PLAINTEXT']
+           '--set', 'listeners.client.protocol=PLAINTEXT',
+           '--set','resources.limits.cpu=500m',
+           '--set','resources.limits.memory=512Mi',
+           '--set','resources.requests.cpu=200m',
+           '--set','resources.requests.memory=256Mi']
 )
+
+k8s_yaml('mongo/pvc.yaml')
+
 
 # Deploy MongoDB from the Bitnami Helm chart
 helm_resource(
     name='mongodb',
     chart='oci://registry-1.docker.io/bitnamicharts/mongodb',
     namespace='chatapp',
-    flags=['--set', 'auth.enabled=false']
+    flags=[
+        '--set','auth.enabled=false',
+    '--set','persistence.enabled=true',
+    '--set','persistence.existingClaim=mongodb',
+        '--set','resources.limits.cpu=500m',
+        '--set','resources.limits.memory=512Mi',
+        '--set','resources.requests.cpu=200m',
+        '--set','resources.requests.memory=256Mi'
+    ]
 )
 
 # Build the backend Docker image
@@ -54,7 +68,6 @@ helm_resource(
 docker_build('frontend', 'frontend')
 
 
-# k8s_yaml('dex/ingress.yaml')
 
 # Deploy the frontend Helm chart in chatapp namespace
 k8s_yaml(helm('frontend/chart', name='frontend', namespace='chatapp'))

@@ -5,30 +5,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 	skafka "github.com/segmentio/kafka-go"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
-
-	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gorilla/websocket"
 	"github.com/xeipuuv/gojsonschema"
 
 	"src/config"
 	"src/kafka"
 	"src/logger"
+	"src/metrics"
 	"src/models"
+	oidcutil "src/oidc"
+	"src/store"
+
+	coreoidc "github.com/coreos/go-oidc/v3/oidc"
 )
 
 var upgrader = websocket.Upgrader{
@@ -38,9 +35,9 @@ var upgrader = websocket.Upgrader{
 }
 
 var broadcast = make(chan models.Message)
-var mongoClient *mongo.Client
-var mongoCollection *mongo.Collection
-var verifier *oidc.IDTokenVerifier
+
+// Mongo handled by store package
+var oidcVerifier *coreoidc.IDTokenVerifier
 var clients = make(map[*websocket.Conn]bool)
 var appCtx context.Context
 var appCancel context.CancelFunc
@@ -52,28 +49,15 @@ func main() {
 	appCtx, appCancel = context.WithCancel(context.Background())
 	defer appCancel()
 
-	// Connect to MongoDB
-	var err error
-	mongoClient, err = mongo.Connect(appCtx, options.Client().ApplyURI(config.MongoURI))
-	if err != nil {
-		log.Fatalf("Failed to connect to MongoDB: %v", err)
+	// Initialize Mongo store layer
+	if err := store.Init(appCtx); err != nil {
+		log.Fatalf("mongo init failed: %v", err)
 	}
-	mongoCollection = mongoClient.Database("chatapp").Collection("messages")
+	defer store.Close(context.Background())
 
-	// Ping to ensure MongoDB connection is alive
-	if err := mongoClient.Ping(appCtx, readpref.Primary()); err != nil {
-		log.Fatalf("MongoDB ping failed: %v", err)
-	}
-
-	// Ensure indexes (idempotent)
-	if err := ensureMongoIndexes(appCtx, mongoCollection); err != nil {
-		log.Fatalf("Failed creating Mongo indexes: %v", err)
-	}
-	defer mongoClient.Disconnect(context.Background())
-
-	// Initialize OIDC provider with exponential backoff
-	provider := initOIDCProviderWithBackoff(appCtx, config.DexIssuer)
-	verifier = provider.Verifier(&oidc.Config{ClientID: config.ClientID})
+	// Initialize OIDC (provider + verifier)
+	_, v := oidcutil.Init(appCtx)
+	oidcVerifier = v
 
 	// Capture OS signals
 	sigCh := make(chan os.Signal, 1)
@@ -95,6 +79,7 @@ func main() {
 	http.Handle("/messages", authMiddleware(http.HandlerFunc(handleMessages)))
 	http.HandleFunc("/healthz", handleHealth)
 	http.HandleFunc("/readyz", handleReady)
+	http.HandleFunc("/metrics", metrics.Handler)
 
 	// Fan-out broadcaster (Kafka -> WebSocket clients)
 	go handleMessagesBroadcasting()
@@ -106,45 +91,7 @@ func main() {
 }
 
 func authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Authorization header required", http.StatusUnauthorized)
-			return
-		}
-
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if _, err := verifyToken(r.Context(), token); err != nil {
-			logger.Error("token verification failed", err)
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-func verifyToken(ctx context.Context, rawToken string) (*oidc.IDToken, error) {
-	token, err := verifier.Verify(ctx, rawToken)
-	if err != nil {
-		return nil, err
-	}
-	// Check audience claim
-	var claims struct {
-		Aud string `json:"aud"`
-		Exp int64  `json:"exp"`
-	}
-	if err := token.Claims(&claims); err != nil {
-		return nil, err
-	}
-	if claims.Aud != config.Audience {
-		return nil, fmt.Errorf("invalid audience: expected %s, got %s", config.Audience, claims.Aud)
-	}
-	// Check expiration
-	if time.Now().Unix() > claims.Exp {
-		return nil, fmt.Errorf("token expired")
-	}
-	return token, nil
+	return oidcutil.AuthMiddleware(oidcVerifier)(next)
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +102,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := verifyToken(r.Context(), token); err != nil {
+	if _, err := oidcutil.VerifyToken(r.Context(), oidcVerifier, token); err != nil {
 		logger.Error("token verification failed", err)
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
@@ -250,29 +197,10 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 
 // insertMessageMongo persists a message to MongoDB
 func insertMessageMongo(msg models.Message) error {
-	filter := bson.M{"message_id": msg.MessageID}
-	update := bson.M{"$setOnInsert": msg}
-	opts := options.Update().SetUpsert(true)
-	_, err := mongoCollection.UpdateOne(context.Background(), filter, update, opts)
-	return err
+	return store.InsertMessage(context.Background(), msg)
 }
-
-// getAllMessagesMongo fetches all messages from MongoDB
 func getAllMessagesMongo() ([]models.Message, error) {
-	cur, err := mongoCollection.Find(context.Background(), map[string]interface{}{})
-	if err != nil {
-		return nil, err
-	}
-	defer cur.Close(context.Background())
-	var messages []models.Message
-	for cur.Next(context.Background()) {
-		var msg models.Message
-		if err := cur.Decode(&msg); err != nil {
-			return nil, err
-		}
-		messages = append(messages, msg)
-	}
-	return messages, nil
+	return store.GetAllMessages(context.Background())
 }
 
 // validateMessageSchema validates a Message struct against schema.json
@@ -328,7 +256,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 func handleReady(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
 	defer cancel()
-	if err := mongoClient.Ping(ctx, readpref.Primary()); err != nil {
+	if err := store.Ping(ctx); err != nil {
 		http.Error(w, "mongo not ready", http.StatusServiceUnavailable)
 		return
 	}
@@ -346,42 +274,6 @@ func handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 // ensureMongoIndexes creates required indexes (idempotent). Unique index on message_id and TTL/index on timestamp for sorting.
-func ensureMongoIndexes(ctx context.Context, coll *mongo.Collection) error {
-	// Unique index on message_id
-	_, err := coll.Indexes().CreateMany(ctx, []mongo.IndexModel{
-		{
-			Keys:    bson.D{{Key: "message_id", Value: 1}},
-			Options: options.Index().SetUnique(true).SetName("uniq_message_id"),
-		},
-		{
-			Keys:    bson.D{{Key: "timestamp", Value: 1}},
-			Options: options.Index().SetName("idx_timestamp"),
-		},
-	})
-	return err
-}
+// (Mongo index creation moved to store package)
 
-// initOIDCProviderWithBackoff attempts discovery with exponential backoff (jitter-less)
-func initOIDCProviderWithBackoff(ctx context.Context, issuer string) *oidc.Provider {
-	var provider *oidc.Provider
-	var err error
-	maxAttempts := 8
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		provider, err = oidc.NewProvider(ctx, issuer)
-		if err == nil {
-			logger.Info("oidc provider initialized", logger.FieldKV("issuer", issuer), logger.FieldKV("attempt", attempt))
-			return provider
-		}
-		sleep := time.Duration(math.Min(float64(time.Second*30), float64(time.Second)*math.Pow(2, float64(attempt))))
-		logger.Error("oidc provider init failed", err, logger.FieldKV("attempt", attempt), logger.FieldKV("next_sleep", sleep.String()))
-		select {
-		case <-time.After(sleep):
-			continue
-		case <-ctx.Done():
-			logger.Error("context canceled during oidc init", ctx.Err())
-			log.Fatalf("Failed to initialize OIDC provider: %v", err)
-		}
-	}
-	log.Fatalf("Failed to initialize OIDC provider after retries: %v", err)
-	return nil
-}
+// (OIDC provider/backoff logic moved to oidc/oidc.go)

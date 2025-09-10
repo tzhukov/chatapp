@@ -8,7 +8,24 @@ service:
   port: 8080
 
 env:
-  DEX_ISSUER_URL: "http://dex:5556/dex"
+  DEX_ISSUER_URL: "https://ingress.local/dex"
+  DEX_ISSUER_INTERNAL_DIAL: "ingress-nginx-controller.ingress-nginx.svc.cluster.local:443"
+  DEX_ISSUER_DIAL_ADDRESS: "ingress-nginx-controller.ingress-nginx.svc.cluster.local:443"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+# Optional custom CA secret mounting (provide a secret with key ca.crt)
+customCA:
+  enabled: true
+  secretName: dex-ca-bundle
+  mountPath: /etc/ssl/custom
+  certFile: /etc/ssl/custom/ca.crt
 
 ingress:
   enabled: true

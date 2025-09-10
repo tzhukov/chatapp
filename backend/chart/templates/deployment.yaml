@@ -22,8 +22,26 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
           env:
             {{- range $key, $val := .Values.env }}
             - name: {{ $key }}
               value: {{ $val | quote }}
             {{- end }}
+            {{- if .Values.customCA.enabled }}
+            - name: DEX_CA_CERT_FILE
+              value: {{ .Values.customCA.certFile | quote }}
+            {{- end }}
+          volumeMounts:
+            {{- if .Values.customCA.enabled }}
+            - name: custom-ca
+              mountPath: {{ .Values.customCA.mountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if .Values.customCA.enabled }}
+        - name: custom-ca
+          secret:
+            secretName: {{ .Values.customCA.secretName }}
+        {{- end }}

@@ -1,22 +1,20 @@
 config:
-  # Set it to a valid URL
-  issuer: http://ingress.local
+  # Issuer must match external URL (served under /dex)
+  issuer: https://ingress.local/dex  # TLS enabled ingress; ensure cert for ingress.local present
 
-  # See https://dexidp.io/docs/storage/ for more options
   storage:
     type: memory
 
-  # Enable at least one connector
   enablePasswordDB: true
-
-  connectors:
-    - type: github
-      id: github
-      name: GitHub
-      config:
-        clientID: GITHUB_CLIENT_ID
-        clientSecret: GITHUB_CLIENT_SECRET
-        redirectURI: http://ingress.local/dex/callback
+  # GitHub connector removed for local development. Add back by reinstating a connectors list.
+  # connectors:
+  #   - type: github
+  #     id: github
+  #     name: GitHub
+  #     config:
+  #       clientID: GITHUB_CLIENT_ID
+  #       clientSecret: GITHUB_CLIENT_SECRET
+  #       redirectURI: http://ingress.local/dex/callback
 
   staticClients:
     - id: chat-app-frontend
@@ -46,3 +44,11 @@ ingress:
     - hosts:
         - ingress.local
       secretName: dex-cert
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
