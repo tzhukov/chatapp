@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,41 +48,36 @@ var appCancel context.CancelFunc
 func main() {
 	logger.Info("starting application")
 
+	// Root context with cancellation for graceful shutdown (used across subsystems)
+	appCtx, appCancel = context.WithCancel(context.Background())
+	defer appCancel()
+
 	// Connect to MongoDB
 	var err error
-	mongoClient, err = mongo.Connect(context.Background(), options.Client().ApplyURI(config.MongoURI))
+	mongoClient, err = mongo.Connect(appCtx, options.Client().ApplyURI(config.MongoURI))
 	if err != nil {
 		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
 	mongoCollection = mongoClient.Database("chatapp").Collection("messages")
 
 	// Ping to ensure MongoDB connection is alive
-	if err := mongoClient.Ping(context.Background(), readpref.Primary()); err != nil {
+	if err := mongoClient.Ping(appCtx, readpref.Primary()); err != nil {
 		log.Fatalf("MongoDB ping failed: %v", err)
 	}
 
 	// Ensure indexes (idempotent)
-	if err := ensureMongoIndexes(context.Background(), mongoCollection); err != nil {
+	if err := ensureMongoIndexes(appCtx, mongoCollection); err != nil {
 		log.Fatalf("Failed creating Mongo indexes: %v", err)
 	}
 	defer mongoClient.Disconnect(context.Background())
 
-	ctx := context.Background()
-	provider, err := oidc.NewProvider(ctx, config.DexIssuer)
-	if err != nil {
-		log.Fatalf("Failed to create OIDC provider: %v", err)
-	}
-
+	// Initialize OIDC provider with exponential backoff
+	provider := initOIDCProviderWithBackoff(appCtx, config.DexIssuer)
 	verifier = provider.Verifier(&oidc.Config{ClientID: config.ClientID})
-
-	// Root context with cancellation for graceful shutdown
-	appCtx, appCancel = context.WithCancel(context.Background())
-	defer appCancel()
 
 	// Capture OS signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
 	go func() {
 		<-sigCh
 		logger.Info("shutdown signal received")
@@ -91,13 +87,16 @@ func main() {
 		os.Exit(0)
 	}()
 
+	// Start Kafka reader consumer -> broadcast channel
 	go kafka.Reader(appCtx, broadcast)
 
+	// HTTP routes
 	http.HandleFunc("/ws", handleConnections)
 	http.Handle("/messages", authMiddleware(http.HandlerFunc(handleMessages)))
 	http.HandleFunc("/healthz", handleHealth)
 	http.HandleFunc("/readyz", handleReady)
 
+	// Fan-out broadcaster (Kafka -> WebSocket clients)
 	go handleMessagesBroadcasting()
 
 	logger.Info("http server listening", logger.FieldKV("port", config.ApiPort))
@@ -151,7 +150,7 @@ func verifyToken(ctx context.Context, rawToken string) (*oidc.IDToken, error) {
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		log.Printf("token not provided in query params")
+		logger.Error("token missing", fmt.Errorf("no token in query"))
 		http.Error(w, "token not provided", http.StatusUnauthorized)
 		return
 	}
@@ -164,13 +163,11 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("error upgrading connection: %v", err)
+		logger.Error("websocket upgrade failed", err)
 		return
 	}
-	defer ws.Close()
-
 	clients[ws] = true
-	logger.Info("client connected", logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
+	logger.Info("websocket client connected", logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
 
 	for {
 		var msg models.Message
@@ -178,24 +175,25 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			logger.Error("websocket read error", err, logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
 			delete(clients, ws)
 			logger.Info("client disconnected", logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
-			break
+			ws.Close()
+			return
 		}
 
-		// Assign server-side ID and timestamp if missing
+		// Ensure message ID & timestamp
 		if msg.MessageID == "" {
 			msg.MessageID = uuid.NewString()
 		}
 		if msg.Timestamp.IsZero() {
-			msg.Timestamp = time.Now()
+			msg.Timestamp = time.Now().UTC()
 		}
 
 		// Validate schema
 		if err := validateMessageSchema(msg); err != nil {
-			logger.Error("websocket message schema invalid", err)
+			logger.Error("websocket message schema invalid", err, logger.FieldKV("message_id", msg.MessageID))
 			continue
 		}
 
-		// Always route through Kafka
+		// Publish via Kafka (consumer will broadcast)
 		if err := kafka.Writer(appCtx, msg); err != nil {
 			logger.Error("kafka write from websocket failed", err, logger.FieldKV("message_id", msg.MessageID))
 			continue
@@ -361,4 +359,29 @@ func ensureMongoIndexes(ctx context.Context, coll *mongo.Collection) error {
 		},
 	})
 	return err
+}
+
+// initOIDCProviderWithBackoff attempts discovery with exponential backoff (jitter-less)
+func initOIDCProviderWithBackoff(ctx context.Context, issuer string) *oidc.Provider {
+	var provider *oidc.Provider
+	var err error
+	maxAttempts := 8
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		provider, err = oidc.NewProvider(ctx, issuer)
+		if err == nil {
+			logger.Info("oidc provider initialized", logger.FieldKV("issuer", issuer), logger.FieldKV("attempt", attempt))
+			return provider
+		}
+		sleep := time.Duration(math.Min(float64(time.Second*30), float64(time.Second)*math.Pow(2, float64(attempt))))
+		logger.Error("oidc provider init failed", err, logger.FieldKV("attempt", attempt), logger.FieldKV("next_sleep", sleep.String()))
+		select {
+		case <-time.After(sleep):
+			continue
+		case <-ctx.Done():
+			logger.Error("context canceled during oidc init", ctx.Err())
+			log.Fatalf("Failed to initialize OIDC provider: %v", err)
+		}
+	}
+	log.Fatalf("Failed to initialize OIDC provider after retries: %v", err)
+	return nil
 }
