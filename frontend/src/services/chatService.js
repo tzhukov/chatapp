@@ -2,12 +2,12 @@ import { UserManager, WebStorageStateStore } from "oidc-client";
 
 
 const config = {
-  authority: import.meta.env.VITE_DEX_ISSUER_URL,
-  client_id: import.meta.env.VITE_DEX_CLIENT_ID,
-  redirect_uri: import.meta.env.VITE_DEX_REDIRECT_URI,
+  authority: process.env.VUE_APP_DEX_ISSUER_URL,
+  client_id: process.env.VUE_APP_DEX_CLIENT_ID,
+  redirect_uri: process.env.VUE_APP_DEX_REDIRECT_URI,
   response_type: "code",
-  scope: import.meta.env.VITE_DEX_SCOPES,
-  post_logout_redirect_uri: import.meta.env.VITE_DEX_REDIRECT_URI,
+  scope: process.env.VUE_APP_DEX_SCOPES,
+  post_logout_redirect_uri: process.env.VUE_APP_DEX_REDIRECT_URI,
   userStore: new WebStorageStateStore({ store: window.localStorage }),
 };
 
@@ -53,7 +53,7 @@ export const chatService = {
     if (!token) {
       throw new Error("User not authenticated");
     }
-    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/messages`, {
+    const response = await fetch(`${process.env.VUE_APP_API_BASE_URL}/messages`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -73,7 +73,7 @@ export const chatService = {
     if (!token) {
       throw new Error("User not authenticated");
     }
-    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/messages`, {
+    const response = await fetch(`${process.env.VUE_APP_API_BASE_URL}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -96,7 +96,7 @@ export const chatService = {
     if (!token) {
       throw new Error("User not authenticated");
     }
-    const socket = new WebSocket(`${import.meta.env.VITE_WS_URL}?token=${token}`);
+    const socket = new WebSocket(`${process.env.VUE_APP_WS_URL}?token=${token}`);
     socket.onopen = () => {
       console.log("WebSocket connection established.");
     };
