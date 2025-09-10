@@ -1,0 +1,23 @@
+image:
+  repository: frontend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: ingress.local
+      path: /
+      pathType: Prefix
+  tls: 
+    - hosts:
+        - ingress.local
+      secretName: dex-cert

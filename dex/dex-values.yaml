@@ -1,0 +1,28 @@
+config:
+  # Set it to a valid URL
+  issuer: http://ingress.local
+
+  # See https://dexidp.io/docs/storage/ for more options
+  storage:
+    type: memory
+
+  # Enable at least one connector
+  # See https://dexidp.io/docs/connectors/ for more options
+  enablePasswordDB: true
+
+ingress:
+  enabled: true
+
+  annotations:
+    cert-manager.io/cluster-issuer: acme
+  className: nginx
+  
+  hosts:
+    - host: ingress.local
+      paths:
+        - path: /dex
+          pathType: Prefix
+  tls:
+    - hosts:
+        - ingress.local
+      secretName: dex-cert
