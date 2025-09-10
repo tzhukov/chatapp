@@ -26,6 +26,7 @@ var (
 	Audience      = GetEnv("DEX_AUDIENCE", "backend")
 	ApiPort       = GetEnv("API_PORT", "8080")
 	MongoURI      = GetEnv("MONGO_URI", "mongodb://mongodb:27017")
+	MessageMaxLen = GetEnv("MESSAGE_MAX_LENGTH", "1000")
 )
 
 // GetEnv returns the value of the environment variable or a default value

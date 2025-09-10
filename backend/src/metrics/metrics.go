@@ -14,6 +14,9 @@ var (
 	oidcLoopbackAutoDial  atomic.Uint64
 	oidcFallbackActivated atomic.Uint64
 	oidcLastInitAttempts  atomic.Uint64 // gauge semantics
+	wsConnections         atomic.Uint64
+	msgIngestedTotal      atomic.Uint64
+	msgBroadcastTotal     atomic.Uint64
 )
 
 // Increment helpers
@@ -31,6 +34,12 @@ func IncOIDCInitFailure(attempts uint64) {
 }
 func IncOIDCLoopbackAutoDial()  { oidcLoopbackAutoDial.Add(1) }
 func IncOIDCFallbackActivated() { oidcFallbackActivated.Add(1) }
+
+// WebSocket metrics
+func IncWSConnections() { wsConnections.Add(1) }
+func DecWSConnections() { wsConnections.Add(^uint64(0)) } // atomic decrement
+func IncMsgIngested()   { msgIngestedTotal.Add(1) }
+func IncMsgBroadcast()  { msgBroadcastTotal.Add(1) }
 
 // Handler exposes metrics in a minimal Prometheus exposition format.
 func Handler(w http.ResponseWriter, _ *http.Request) {
@@ -55,4 +64,16 @@ func Handler(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintf(w, "# HELP chatapp_oidc_last_init_attempts Attempts used in the most recent successful/failed init\n")
 	fmt.Fprintf(w, "# TYPE chatapp_oidc_last_init_attempts gauge\n")
 	fmt.Fprintf(w, "chatapp_oidc_last_init_attempts %d\n", oidcLastInitAttempts.Load())
+
+	fmt.Fprintf(w, "# HELP chatapp_ws_connections Current websocket connections\n")
+	fmt.Fprintf(w, "# TYPE chatapp_ws_connections gauge\n")
+	fmt.Fprintf(w, "chatapp_ws_connections %d\n", wsConnections.Load())
+
+	fmt.Fprintf(w, "# HELP chatapp_messages_ingested_total Messages accepted and enqueued\n")
+	fmt.Fprintf(w, "# TYPE chatapp_messages_ingested_total counter\n")
+	fmt.Fprintf(w, "chatapp_messages_ingested_total %d\n", msgIngestedTotal.Load())
+
+	fmt.Fprintf(w, "# HELP chatapp_messages_broadcast_total Messages broadcast to websocket clients\n")
+	fmt.Fprintf(w, "# TYPE chatapp_messages_broadcast_total counter\n")
+	fmt.Fprintf(w, "chatapp_messages_broadcast_total %d\n", msgBroadcastTotal.Load())
 }

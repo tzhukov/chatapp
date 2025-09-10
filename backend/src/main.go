@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -41,6 +42,7 @@ var oidcVerifier *coreoidc.IDTokenVerifier
 var clients = make(map[*websocket.Conn]bool)
 var appCtx context.Context
 var appCancel context.CancelFunc
+var maxMsgLen = 1000
 
 func main() {
 	logger.Info("starting application")
@@ -70,6 +72,13 @@ func main() {
 		time.Sleep(500 * time.Millisecond)
 		os.Exit(0)
 	}()
+
+	// Parse MESSAGE_MAX_LENGTH env
+	if v := os.Getenv("MESSAGE_MAX_LENGTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxMsgLen = n
+		}
+	}
 
 	// Start Kafka reader consumer -> broadcast channel
 	go kafka.Reader(appCtx, broadcast)
@@ -114,6 +123,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clients[ws] = true
+	metrics.IncWSConnections()
 	logger.Info("websocket client connected", logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
 
 	for {
@@ -121,6 +131,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		if err := ws.ReadJSON(&msg); err != nil {
 			logger.Error("websocket read error", err, logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
 			delete(clients, ws)
+			metrics.DecWSConnections()
 			logger.Info("client disconnected", logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
 			ws.Close()
 			return
@@ -134,7 +145,11 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			msg.Timestamp = time.Now().UTC()
 		}
 
-		// Validate schema
+		// Validate schema & size
+		if len(msg.Content) > maxMsgLen {
+			logger.Error("websocket message too long", fmt.Errorf("len=%d max=%d", len(msg.Content), maxMsgLen))
+			continue
+		}
 		if err := validateMessageSchema(msg); err != nil {
 			logger.Error("websocket message schema invalid", err, logger.FieldKV("message_id", msg.MessageID))
 			continue
@@ -145,6 +160,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			logger.Error("kafka write from websocket failed", err, logger.FieldKV("message_id", msg.MessageID))
 			continue
 		}
+		metrics.IncMsgIngested()
 	}
 }
 
@@ -158,7 +174,12 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Validate message against schema
+		// Size & schema validation
+		if len(msg.Content) > maxMsgLen {
+			logger.Error("http message too long", fmt.Errorf("len=%d max=%d", len(msg.Content), maxMsgLen))
+			http.Error(w, "message too long", http.StatusBadRequest)
+			return
+		}
 		if err := validateMessageSchema(msg); err != nil {
 			logger.Error("message schema validation failed", err)
 			http.Error(w, "Invalid message schema: "+err.Error(), http.StatusBadRequest)
@@ -177,6 +198,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to enqueue message", http.StatusInternalServerError)
 			return
 		}
+		metrics.IncMsgIngested()
 
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]string{"message_id": msg.MessageID, "status": "enqueued"})
@@ -238,6 +260,7 @@ func handleMessagesBroadcasting() {
 				logger.Info("client disconnected due to error", logger.FieldKV("remote_addr", client.RemoteAddr().String()))
 			}
 		}
+		metrics.IncMsgBroadcast()
 		// Persist message to MongoDB after broadcasting
 		if err := insertMessageMongo(msg); err != nil {
 			logger.Error("persist message failed", err, logger.FieldKV("message_id", msg.MessageID))
