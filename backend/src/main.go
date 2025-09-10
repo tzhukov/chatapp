@@ -23,10 +23,15 @@ var clients = make(map[*websocket.Conn]bool)
 var broadcast = make(chan Message)
 var messagesStore = make([]Message, 0)
 
-const (
-	kafkaBroker = "kafka:9092"
-	topic       = "chat-messages"
-	dexIssuer   = "http://dex:5556/dex"
+import "os"
+
+var (
+	kafkaBroker = getEnv("KAFKA_BROKER", "kafka:9092")
+	topic       = getEnv("KAFKA_TOPIC", "chat-messages")
+	dexIssuer   = getEnv("DEX_ISSUER_URL", "http://dex:5556/dex")
+	clientID    = getEnv("DEX_CLIENT_ID", "backend")
+	audience    = getEnv("DEX_AUDIENCE", "backend")
+	apiPort     = getEnv("API_PORT", "8080")
 )
 
 type Message struct {
@@ -47,7 +52,7 @@ func main() {
 		log.Fatalf("Failed to create OIDC provider: %v", err)
 	}
 
-	verifier = provider.Verifier(&oidc.Config{ClientID: "backend"})
+	verifier = provider.Verifier(&oidc.Config{ClientID: clientID})
 
 	go kafkaReader()
 
@@ -56,11 +61,18 @@ func main() {
 
 	go handleMessagesBroadcasting()
 
-	log.Println("http server started on :8080")
-	err = http.ListenAndServe(":8080", nil)
+	log.Printf("http server started on :%s", apiPort)
+	err = http.ListenAndServe(":"+apiPort, nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
+}
+// getEnv returns the value of the environment variable or a default value
+func getEnv(key, defaultVal string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultVal
 }
 
 func authMiddleware(next http.Handler) http.Handler {

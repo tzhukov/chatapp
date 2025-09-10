@@ -1,12 +1,13 @@
 import { UserManager } from "oidc-client";
 
+
 const config = {
-  authority: "http://ingress.local/dex",
-  client_id: "chat-app-frontend",
-  redirect_uri: "http://localhost:8081/callback",
+  authority: import.meta.env.VITE_DEX_ISSUER_URL,
+  client_id: import.meta.env.VITE_DEX_CLIENT_ID,
+  redirect_uri: import.meta.env.VITE_DEX_REDIRECT_URI,
   response_type: "code",
-  scope: "openid profile email",
-  post_logout_redirect_uri: "http://localhost:8081/",
+  scope: import.meta.env.VITE_DEX_SCOPES,
+  post_logout_redirect_uri: import.meta.env.VITE_DEX_REDIRECT_URI,
 };
 
 const userManager = new UserManager(config);
@@ -37,7 +38,7 @@ export const chatService = {
       throw new Error("User not authenticated");
     }
 
-    const response = await fetch("/messages", {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/messages`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -57,7 +58,7 @@ export const chatService = {
       throw new Error("User not authenticated");
     }
 
-    const response = await fetch("/messages", {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -80,7 +81,7 @@ export const chatService = {
       throw new Error("User not authenticated");
     }
 
-    const socket = new WebSocket(`ws://localhost:8082/ws?token=${token}`);
+  const socket = new WebSocket(`${import.meta.env.VITE_WS_URL}?token=${token}`);
 
     socket.onopen = () => {
       console.log("WebSocket connection established.");
