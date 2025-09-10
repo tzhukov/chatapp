@@ -7,8 +7,28 @@ config:
     type: memory
 
   # Enable at least one connector
-  # See https://dexidp.io/docs/connectors/ for more options
   enablePasswordDB: true
+
+  connectors:
+    - type: github
+      id: github
+      name: GitHub
+      config:
+        clientID: GITHUB_CLIENT_ID
+        clientSecret: GITHUB_CLIENT_SECRET
+        redirectURI: http://ingress.local/dex/callback
+
+  staticClients:
+    - id: chat-app-frontend
+      redirectURIs:
+        - https://ingress.local/dex/auth/callback
+      name: Chat App Frontend
+      secret: CHAT_APP_FRONTEND_SECRET
+    - id: backend
+      redirectURIs:
+        - https://ingress.local/dex/auth/callback
+      name: Chat App Backend
+      secret: CHAT_APP_BACKEND_SECRET
 
 ingress:
   enabled: true

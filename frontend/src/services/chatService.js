@@ -1,4 +1,4 @@
-import { UserManager } from "oidc-client";
+import { UserManager, WebStorageStateStore } from "oidc-client";
 
 
 const config = {
@@ -8,6 +8,7 @@ const config = {
   response_type: "code",
   scope: import.meta.env.VITE_DEX_SCOPES,
   post_logout_redirect_uri: import.meta.env.VITE_DEX_REDIRECT_URI,
+  userStore: new WebStorageStateStore({ store: window.localStorage }),
 };
 
 const userManager = new UserManager(config);
@@ -31,34 +32,48 @@ export const chatService = {
     return userManager.getUser();
   },
 
-  async getMessages() {
+  async getAccessToken() {
     const user = await userManager.getUser();
-    const token = user ? user.access_token : null;
+    if (!user) return null;
+    // If token expired, try to renew using refresh token
+    if (user.expired && user.refresh_token) {
+      try {
+        const renewedUser = await userManager.signinSilent();
+        return renewedUser.access_token;
+      } catch (err) {
+        await userManager.signoutRedirect();
+        throw new Error("Session expired. Please log in again.");
+      }
+    }
+    return user.access_token;
+  },
+
+  async getMessages() {
+    const token = await this.getAccessToken();
     if (!token) {
       throw new Error("User not authenticated");
     }
-
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/messages`, {
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/messages`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
     });
-
+    if (response.status === 401) {
+      await userManager.signoutRedirect();
+      throw new Error("Session expired. Please log in again.");
+    }
     if (!response.ok) {
       throw new Error("Failed to fetch messages");
     }
-
     return response.json();
   },
 
   async sendMessage(message) {
-    const user = await userManager.getUser();
-    const token = user ? user.access_token : null;
+    const token = await this.getAccessToken();
     if (!token) {
       throw new Error("User not authenticated");
     }
-
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/messages`, {
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -66,35 +81,31 @@ export const chatService = {
       },
       body: JSON.stringify(message),
     });
-
+    if (response.status === 401) {
+      await userManager.signoutRedirect();
+      throw new Error("Session expired. Please log in again.");
+    }
     if (!response.ok) {
       throw new Error("Failed to send message");
     }
-
     return response.json();
   },
 
   async connectWebSocket(onMessage) {
-    const user = await userManager.getUser();
-    const token = user ? user.access_token : null;
+    const token = await this.getAccessToken();
     if (!token) {
       throw new Error("User not authenticated");
     }
-
-  const socket = new WebSocket(`${import.meta.env.VITE_WS_URL}?token=${token}`);
-
+    const socket = new WebSocket(`${import.meta.env.VITE_WS_URL}?token=${token}`);
     socket.onopen = () => {
       console.log("WebSocket connection established.");
     };
-
     socket.onmessage = (event) => {
       onMessage(JSON.parse(event.data));
     };
-
     socket.onerror = (error) => {
       console.error("WebSocket error:", error);
     };
-
     socket.onclose = (event) => {
       if (event.wasClean) {
         console.log(`WebSocket connection closed cleanly, code=${event.code} reason=${event.reason}`);
@@ -102,7 +113,6 @@ export const chatService = {
         console.error("WebSocket connection died");
       }
     };
-
     return socket;
   },
 };
