@@ -28,7 +28,7 @@ paths:
       tags:
         - messages
       summary: Send a new message
-      description: Sends a new chat message to the system.
+      description: Enqueues a new chat message to the Kafka topic. Persistence and broadcast occur asynchronously.
       operationId: sendMessage
       security:
         - bearerAuth: []
@@ -46,12 +46,19 @@ paths:
                   type: string
                   description: The message text.
       responses:
-        '201':
-          description: Message successfully sent.
+        '202':
+          description: Message accepted and enqueued for processing.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Message'
+                type: object
+                properties:
+                  message_id:
+                    type: string
+                    description: Server-assigned message identifier.
+                  status:
+                    type: string
+                    example: enqueued
         '400':
           description: Invalid request body.
 components:

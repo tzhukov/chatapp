@@ -3,73 +3,122 @@ package kafka
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"errors"
+	"sync"
+	"time"
+
+	"src/config"
+	"src/logger"
+	"src/models"
 
 	"github.com/segmentio/kafka-go"
-	"src/config"
-	"src/models"
 )
 
-func Writer(msg models.Message) {
-	log.Printf("writing message to kafka topic %s", config.Topic)
-	w := &kafka.Writer{
-		Addr:     kafka.TCP(config.KafkaBroker),
-		Topic:    config.Topic,
-		Balancer: &kafka.LeastBytes{},
-	}
+var (
+	writerOnce   sync.Once
+	sharedWriter *kafka.Writer
+)
 
-	msgBytes, err := json.Marshal(msg)
-	if err != nil {
-		log.Printf("error marshalling message: %v", err)
-		return
+func getWriter(topic string) *kafka.Writer {
+	writerOnce.Do(func() {
+		sharedWriter = &kafka.Writer{
+			Addr:     kafka.TCP(config.KafkaBroker),
+			Topic:    topic,
+			Balancer: &kafka.LeastBytes{},
+		}
+	})
+	if sharedWriter.Topic != topic { // need a separate writer for different topic
+		return &kafka.Writer{
+			Addr:     kafka.TCP(config.KafkaBroker),
+			Topic:    topic,
+			Balancer: &kafka.LeastBytes{},
+		}
 	}
-
-	err = w.WriteMessages(context.Background(),
-		kafka.Message{
-			Key:   []byte(msg.MessageID),
-			Value: msgBytes,
-		},
-	)
-	if err != nil {
-		log.Printf("failed to write messages to kafka: %v", err)
-	} else {
-		log.Printf("successfully wrote message to kafka: %s", msg.MessageID)
-	}
-
-	if err := w.Close(); err != nil {
-		log.Printf("failed to close kafka writer: %v", err)
-	}
+	return sharedWriter
 }
 
-func Reader(broadcast chan<- models.Message) {
-	log.Printf("starting kafka reader on topic %s", config.Topic)
+// Writer publishes a single message with retry using the provided context.
+func Writer(ctx context.Context, msg models.Message) error {
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	w := getWriter(config.Topic)
+	maxAttempts := 5
+	baseDelay := 50 * time.Millisecond
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		perAttemptCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		lastErr = w.WriteMessages(perAttemptCtx, kafka.Message{Key: []byte(msg.MessageID), Value: msgBytes})
+		cancel()
+		if lastErr == nil {
+			logger.Info("kafka write success", logger.FieldKV("message_id", msg.MessageID), logger.FieldKV("attempt", attempt))
+			break
+		}
+		logger.Error("kafka write failure", lastErr, logger.FieldKV("attempt", attempt), logger.FieldKV("message_id", msg.MessageID))
+		time.Sleep(baseDelay * time.Duration(attempt*attempt))
+	}
+	if lastErr != nil {
+		return errors.New("kafka write failed after retries: " + lastErr.Error())
+	}
+	return nil
+}
+
+// DLQWriter sends a failed message + reason to dead-letter topic.
+func DLQWriter(ctx context.Context, msg models.Message, reason string) error {
+	payload := struct {
+		Msg      models.Message `json:"message"`
+		Reason   string         `json:"reason"`
+		FailedAt time.Time      `json:"failed_at"`
+	}{Msg: msg, Reason: reason, FailedAt: time.Now().UTC()}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	w := getWriter(config.DLQTopic)
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := w.WriteMessages(writeCtx, kafka.Message{Key: []byte(msg.MessageID), Value: b}); err != nil {
+		logger.Error("dlq write failure", err, logger.FieldKV("message_id", msg.MessageID))
+		return err
+	}
+	logger.Info("dlq write success", logger.FieldKV("message_id", msg.MessageID), logger.FieldKV("reason", reason))
+	return nil
+}
+
+// Reader consumes messages until context cancellation.
+func Reader(ctx context.Context, broadcast chan<- models.Message) {
+	logger.Info("starting kafka reader", logger.FieldKV("topic", config.Topic))
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:   []string{config.KafkaBroker},
 		Topic:     config.Topic,
 		Partition: 0,
-		MinBytes:  10e3, // 10KB
-		MaxBytes:  10e6, // 10MB
+		MinBytes:  10e3,
+		MaxBytes:  10e6,
 	})
-
-	for {
-		m, err := r.ReadMessage(context.Background())
-		if err != nil {
-			log.Printf("error reading message from kafka: %v", err)
-			break
+	defer func() {
+		if err := r.Close(); err != nil {
+			logger.Error("kafka reader close error", err)
 		}
-		log.Printf("message read from kafka partition %d at offset %d", m.Partition, m.Offset)
-
-		var msg models.Message
-		err = json.Unmarshal(m.Value, &msg)
+	}()
+	for {
+		m, err := r.ReadMessage(ctx)
 		if err != nil {
-			log.Printf("error unmarshalling message from kafka: %v", err)
+			select {
+			case <-ctx.Done():
+				logger.Info("kafka reader context canceled")
+				return
+			default:
+				logger.Error("kafka read error", err)
+				return
+			}
+		}
+		logger.Debug("kafka message read", logger.FieldKV("offset", m.Offset), logger.FieldKV("partition", m.Partition))
+		var msg models.Message
+		if err := json.Unmarshal(m.Value, &msg); err != nil {
+			logger.Error("kafka message unmarshal error", err)
 			continue
 		}
-
 		broadcast <- msg
-	}
-
-	if err := r.Close(); err != nil {
-		log.Printf("failed to close kafka reader: %v", err)
 	}
 }

@@ -14,7 +14,7 @@ func TestWriterAndReader(t *testing.T) {
 
 	// Writer and Reader require a running Kafka broker, so here we just check function signatures
 	t.Run("Writer", func(t *testing.T) {
-		Writer(msg) // Should not panic
+		_ = Writer(msg) // Should not panic even if broker unreachable (will return error)
 	})
 
 	t.Run("Reader", func(t *testing.T) {

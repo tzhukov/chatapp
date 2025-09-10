@@ -7,8 +7,6 @@ load('ext://namespace','namespace_create','namespace_inject')
 # Set namespace for all resources
 namespace_create('chatapp')
 
-# Deploy Kafka from the public Helm chart
-
 helm_resource(
     name='kafka',
     chart='oci://registry-1.docker.io/bitnamicharts/kafka',
@@ -16,6 +14,14 @@ helm_resource(
     flags=['--set', 'kraft.enabled=true',
            '--set', 'zookeeper.enabled=true',
            '--set', 'listeners.client.protocol=PLAINTEXT']
+)
+
+# Deploy MongoDB from the Bitnami Helm chart
+helm_resource(
+    name='mongodb',
+    chart='oci://registry-1.docker.io/bitnamicharts/mongodb',
+    namespace='chatapp',
+    flags=['--set', 'auth.enabled=false']
 )
 
 # Build the backend Docker image
@@ -48,7 +54,7 @@ helm_resource(
 docker_build('frontend', 'frontend')
 
 
-k8s_yaml('dex/ingress.yaml')
+# k8s_yaml('dex/ingress.yaml')
 
 # Deploy the frontend Helm chart in chatapp namespace
 k8s_yaml(helm('frontend/chart', name='frontend', namespace='chatapp'))
@@ -56,4 +62,4 @@ k8s_yaml(helm('frontend/chart', name='frontend', namespace='chatapp'))
 #Port forwards
 k8s_resource(workload='frontend', port_forwards=[8081])
 # k8s_resource(workload='dex', port_forwards=[9091])
-k8s_resource(workload='backend', port_forwards=[8082])
+# k8s_resource(workload='backend', port_forwards=[8082])

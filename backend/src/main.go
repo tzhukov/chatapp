@@ -2,22 +2,31 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/google/uuid"
+	skafka "github.com/segmentio/kafka-go"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gorilla/websocket"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/xeipuuv/gojsonschema"
 
 	"src/config"
 	"src/kafka"
+	"src/logger"
 	"src/models"
 )
 
@@ -28,23 +37,34 @@ var upgrader = websocket.Upgrader{
 }
 
 var broadcast = make(chan models.Message)
-var db *sql.DB
+var mongoClient *mongo.Client
+var mongoCollection *mongo.Collection
 var verifier *oidc.IDTokenVerifier
 var clients = make(map[*websocket.Conn]bool)
+var appCtx context.Context
+var appCancel context.CancelFunc
 
 func main() {
-	log.Println("Starting application...")
+	logger.Info("starting application")
 
-	// Open SQLite database
+	// Connect to MongoDB
 	var err error
-	db, err = sql.Open("sqlite3", "./chat.db")
+	mongoClient, err = mongo.Connect(context.Background(), options.Client().ApplyURI(config.MongoURI))
 	if err != nil {
-		log.Fatalf("Failed to open database: %v", err)
+		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
-	defer db.Close()
-	if err := createMessagesTable(); err != nil {
-		log.Fatalf("Failed to create messages table: %v", err)
+	mongoCollection = mongoClient.Database("chatapp").Collection("messages")
+
+	// Ping to ensure MongoDB connection is alive
+	if err := mongoClient.Ping(context.Background(), readpref.Primary()); err != nil {
+		log.Fatalf("MongoDB ping failed: %v", err)
 	}
+
+	// Ensure indexes (idempotent)
+	if err := ensureMongoIndexes(context.Background(), mongoCollection); err != nil {
+		log.Fatalf("Failed creating Mongo indexes: %v", err)
+	}
+	defer mongoClient.Disconnect(context.Background())
 
 	ctx := context.Background()
 	provider, err := oidc.NewProvider(ctx, config.DexIssuer)
@@ -54,30 +74,36 @@ func main() {
 
 	verifier = provider.Verifier(&oidc.Config{ClientID: config.ClientID})
 
-	go kafka.Reader(broadcast)
+	// Root context with cancellation for graceful shutdown
+	appCtx, appCancel = context.WithCancel(context.Background())
+	defer appCancel()
+
+	// Capture OS signals
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		logger.Info("shutdown signal received")
+		appCancel()
+		// Allow a short drain period
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+	}()
+
+	go kafka.Reader(appCtx, broadcast)
 
 	http.HandleFunc("/ws", handleConnections)
 	http.Handle("/messages", authMiddleware(http.HandlerFunc(handleMessages)))
+	http.HandleFunc("/healthz", handleHealth)
+	http.HandleFunc("/readyz", handleReady)
 
 	go handleMessagesBroadcasting()
 
-	log.Printf("http server started on :%s", config.ApiPort)
-	err = http.ListenAndServe(":"+config.ApiPort, nil)
-	if err != nil {
-		log.Fatal("ListenAndServe: ", err)
+	logger.Info("http server listening", logger.FieldKV("port", config.ApiPort))
+	if err := http.ListenAndServe(":"+config.ApiPort, nil); err != nil {
+		logger.Error("http server error", err)
 	}
-}
-
-// createMessagesTable creates the messages table if it doesn't exist
-func createMessagesTable() error {
-	query := `CREATE TABLE IF NOT EXISTS messages (
-		message_id TEXT PRIMARY KEY,
-		user_id TEXT,
-		content TEXT,
-		timestamp DATETIME
-	)`
-	_, err := db.Exec(query)
-	return err
 }
 
 func authMiddleware(next http.Handler) http.Handler {
@@ -90,7 +116,7 @@ func authMiddleware(next http.Handler) http.Handler {
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if _, err := verifyToken(r.Context(), token); err != nil {
-			log.Printf("Token verification failed: %v", err)
+			logger.Error("token verification failed", err)
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}
@@ -131,7 +157,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := verifyToken(r.Context(), token); err != nil {
-		log.Printf("Token verification failed: %v", err)
+		logger.Error("token verification failed", err)
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
 	}
@@ -144,19 +170,36 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	defer ws.Close()
 
 	clients[ws] = true
-	log.Printf("client connected: %s", ws.RemoteAddr())
+	logger.Info("client connected", logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
 
 	for {
 		var msg models.Message
-		err := ws.ReadJSON(&msg)
-		if err != nil {
-			log.Printf("error reading json from %s: %v", ws.RemoteAddr(), err)
+		if err := ws.ReadJSON(&msg); err != nil {
+			logger.Error("websocket read error", err, logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
 			delete(clients, ws)
-			log.Printf("client disconnected: %s", ws.RemoteAddr())
+			logger.Info("client disconnected", logger.FieldKV("remote_addr", ws.RemoteAddr().String()))
 			break
 		}
-		log.Printf("received message from %s: %s", ws.RemoteAddr(), msg.Content)
-		broadcast <- msg
+
+		// Assign server-side ID and timestamp if missing
+		if msg.MessageID == "" {
+			msg.MessageID = uuid.NewString()
+		}
+		if msg.Timestamp.IsZero() {
+			msg.Timestamp = time.Now()
+		}
+
+		// Validate schema
+		if err := validateMessageSchema(msg); err != nil {
+			logger.Error("websocket message schema invalid", err)
+			continue
+		}
+
+		// Always route through Kafka
+		if err := kafka.Writer(appCtx, msg); err != nil {
+			logger.Error("kafka write from websocket failed", err, logger.FieldKV("message_id", msg.MessageID))
+			continue
+		}
 	}
 }
 
@@ -165,65 +208,70 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		var msg models.Message
 		err := json.NewDecoder(r.Body).Decode(&msg)
 		if err != nil {
-			log.Printf("error decoding message body: %v", err)
+			logger.Error("decode message body failed", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		// Validate message against schema
 		if err := validateMessageSchema(msg); err != nil {
-			log.Printf("message schema validation failed: %v", err)
+			logger.Error("message schema validation failed", err)
 			http.Error(w, "Invalid message schema: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
+		// Ensure server-side ID and timestamp
+		if msg.MessageID == "" {
+			msg.MessageID = uuid.NewString()
+		}
 		msg.Timestamp = time.Now()
-		log.Printf("received message via POST: %s", msg.Content)
+		logger.Info("received message via POST", logger.FieldKV("message_id", msg.MessageID))
 
-		kafka.Writer(msg)
-		if err := insertMessage(msg); err != nil {
-			log.Printf("failed to persist message: %v", err)
+		if err := kafka.Writer(appCtx, msg); err != nil {
+			logger.Error("kafka write from http failed", err, logger.FieldKV("message_id", msg.MessageID))
+			http.Error(w, "Failed to enqueue message", http.StatusInternalServerError)
+			return
 		}
 
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(msg)
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{"message_id": msg.MessageID, "status": "enqueued"})
 	} else if r.Method == "GET" {
 		w.Header().Set("Content-Type", "application/json")
-		messages, err := getAllMessages()
+		messages, err := getAllMessagesMongo()
 		if err != nil {
-			log.Printf("failed to fetch messages: %v", err)
+			logger.Error("fetch messages failed", err)
 			http.Error(w, "Failed to fetch messages", http.StatusInternalServerError)
 			return
 		}
 		json.NewEncoder(w).Encode(messages)
 	} else {
-		log.Printf("received invalid method for /messages: %s", r.Method)
+		logger.Error("invalid method", fmt.Errorf("method %s", r.Method))
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
-// insertMessage persists a message to the database
-func insertMessage(msg models.Message) error {
-	query := `INSERT INTO messages (message_id, user_id, content, timestamp) VALUES (?, ?, ?, ?)`
-	_, err := db.Exec(query, msg.MessageID, msg.UserID, msg.Content, msg.Timestamp)
+// insertMessageMongo persists a message to MongoDB
+func insertMessageMongo(msg models.Message) error {
+	filter := bson.M{"message_id": msg.MessageID}
+	update := bson.M{"$setOnInsert": msg}
+	opts := options.Update().SetUpsert(true)
+	_, err := mongoCollection.UpdateOne(context.Background(), filter, update, opts)
 	return err
 }
 
-// getAllMessages fetches all messages from the database
-func getAllMessages() ([]models.Message, error) {
-	rows, err := db.Query("SELECT message_id, user_id, content, timestamp FROM messages ORDER BY timestamp ASC")
+// getAllMessagesMongo fetches all messages from MongoDB
+func getAllMessagesMongo() ([]models.Message, error) {
+	cur, err := mongoCollection.Find(context.Background(), map[string]interface{}{})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cur.Close(context.Background())
 	var messages []models.Message
-	for rows.Next() {
+	for cur.Next(context.Background()) {
 		var msg models.Message
-		var ts string
-		if err := rows.Scan(&msg.MessageID, &msg.UserID, &msg.Content, &ts); err != nil {
+		if err := cur.Decode(&msg); err != nil {
 			return nil, err
 		}
-		msg.Timestamp, _ = time.Parse(time.RFC3339, ts)
 		messages = append(messages, msg)
 	}
 	return messages, nil
@@ -251,18 +299,66 @@ func getSchemaPath() string {
 }
 
 func handleMessagesBroadcasting() {
-	log.Println("starting message broadcasting loop")
+	logger.Info("starting message broadcasting loop")
 	for {
 		msg := <-broadcast
-		log.Printf("broadcasting message to %d clients", len(clients))
+		logger.Debug("broadcasting message", logger.FieldKV("client_count", len(clients)))
 		for client := range clients {
 			err := client.WriteJSON(msg)
 			if err != nil {
-				log.Printf("error writing json to client %s: %v", client.RemoteAddr(), err)
+				logger.Error("websocket write error", err, logger.FieldKV("remote_addr", client.RemoteAddr().String()))
 				client.Close()
 				delete(clients, client)
-				log.Printf("client disconnected due to error: %s", client.RemoteAddr())
+				logger.Info("client disconnected due to error", logger.FieldKV("remote_addr", client.RemoteAddr().String()))
 			}
 		}
+		// Persist message to MongoDB after broadcasting
+		if err := insertMessageMongo(msg); err != nil {
+			logger.Error("persist message failed", err, logger.FieldKV("message_id", msg.MessageID))
+			_ = kafka.DLQWriter(appCtx, msg, "mongo_persist_failure")
+		}
 	}
+}
+
+// Health endpoint
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
+// Readiness endpoint
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
+	defer cancel()
+	if err := mongoClient.Ping(ctx, readpref.Primary()); err != nil {
+		http.Error(w, "mongo not ready", http.StatusServiceUnavailable)
+		return
+	}
+	// Kafka readiness: attempt to create a reader and fetch 0 messages via offset check
+	kr := skafka.NewReader(skafka.ReaderConfig{Brokers: []string{config.KafkaBroker}, Topic: config.Topic, Partition: 0, MinBytes: 1, MaxBytes: 1})
+	defer kr.Close()
+	// Use context timeout; try a single fetch of offset to validate metadata
+	_, err := kr.ReadLag(ctx)
+	if err != nil {
+		http.Error(w, "kafka not ready", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ready"))
+}
+
+// ensureMongoIndexes creates required indexes (idempotent). Unique index on message_id and TTL/index on timestamp for sorting.
+func ensureMongoIndexes(ctx context.Context, coll *mongo.Collection) error {
+	// Unique index on message_id
+	_, err := coll.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys:    bson.D{{Key: "message_id", Value: 1}},
+			Options: options.Index().SetUnique(true).SetName("uniq_message_id"),
+		},
+		{
+			Keys:    bson.D{{Key: "timestamp", Value: 1}},
+			Options: options.Index().SetName("idx_timestamp"),
+		},
+	})
+	return err
 }

@@ -9,7 +9,7 @@ This document outlines the design for a simple, real-time chat application. The 
 The chat application follows a microservices-inspired architecture with a clear separation of concerns.  
 **Identity Provider (DexIdp):** A dedicated service responsible for user registration, login, and authorization. It will issue JSON Web Tokens (JWT) upon successful authentication, which the other services will use to verify user identity. DexIdp is an OpenID Connect (OIDC) provider that can be used to federate authentication against other upstream identity providers like LDAP, GitHub, etc.  
 **Frontend (Vue.js):** A single-page application responsible for the user interface, rendering the chat history, and sending new messages. It communicates with the Golang backend via a REST API for initial data and a WebSocket connection for real-time updates. The frontend will redirect users to the IdP for login and attach the received JWT to all requests.  
-**Backend (Golang):** A stateless service that handles API requests and message persistence. It is now responsible for validating the JWTs received from the frontend to ensure requests are from an authenticated user. It exposes REST and WebSocket endpoints. For scalability, the service acts as a producer to a Kafka topic for new messages and also consumes from Kafka to broadcast messages to connected clients via WebSockets.  
+**Backend (Golang):** A stateless service that handles API requests and delegates message persistence. It validates JWTs from the frontend. It exposes REST and WebSocket endpoints. For scalability and consistency, the service now enqueues ALL inbound messages (REST or WebSocket) to Kafka first; a single consumer path then broadcasts to WebSocket clients and persists to MongoDB.  
 **Message Queue (Apache Kafka):** Serves as the central nervous system for real-time communication. It decouples the backend logic from the real-time broadcasting, ensuring that messages are reliably delivered and can be consumed by multiple services if needed in the future.
 
 ## **3\. Component Design**
@@ -60,9 +60,9 @@ The diagram illustrates the message flow with the new authentication component:
 3. The frontend exchanges the code for an access token (JWT) and a refresh token.  
 4. The user sends a message from the Vue.js frontend, attaching the JWT to the Authorization header.  
 5. The frontend makes a POST request to the Golang backend.  
-6. The Golang backend validates the JWT, and upon success, persists the message to the database and publishes the message payload to the chat-messages Kafka topic.  
+6. The Golang backend validates the JWT and, upon success, assigns a server-side UUID + timestamp and publishes only to the chat-messages Kafka topic (no immediate persistence).  
 7. The Golang service also has a consumer running in parallel that listens to the chat-messages topic.  
-8. Upon receiving a message from Kafka, the consumer broadcasts the message to all connected WebSocket clients.
+8. Upon receiving a message from Kafka, the consumer broadcasts the message to all connected WebSocket clients and then persists it to MongoDB (eventual consistency for REST POST which now returns 202 Accepted).  
 
 ## **4\. Interface Definitions**
 
@@ -120,12 +120,18 @@ paths:
                   type: string  
                   description: The message text.  
       responses:  
-        '201':  
-          description: Message successfully sent.  
+        '202':  
+          description: Message accepted and enqueued (persistence and broadcast asynchronous).  
           content:  
             application/json:  
               schema:  
-                $ref: '\#/components/schemas/Message'  
+                type: object  
+                properties:  
+                  message_id:  
+                    type: string  
+                  status:  
+                    type: string  
+                    example: enqueued  
         '400':  
           description: Invalid request body.  
 components:  
@@ -229,5 +235,5 @@ A Golang library for JWTs (e.g., go-jwt or oidc) can automate these validation s
 
 ## **6\. Conclusion**
 
-This updated design document now provides the necessary configuration details for integrating the chat application's frontend and backend with DexIdp. By clearly defining these parameters and validation steps, we can ensure that the developer agent can securely connect the services and establish a robust authentication system.  
+This updated design document reflects the Kafka-first ingestion model, asynchronous persistence (202 Accepted semantics), and MongoDB indexing (unique index on message_id, secondary index on timestamp) to support scalable reads and idempotent writes.  
 Let me know if you would like to dive deeper into the specific configuration for DexIdp, such as setting up connectors or client registrations.
