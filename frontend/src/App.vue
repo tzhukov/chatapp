@@ -13,15 +13,15 @@
         @createChat="createChat" 
       />
       <!-- Main Content -->
-      <div class="flex-grow flex flex-col px-4">
+      <div class="flex-grow flex flex-col px-6 py-4 bg-gray-100 min-h-screen">
         <Topbar :user="user" @logout="logout" />
-        <div class="flex-grow flex flex-col">
+        <div class="flex-grow flex flex-col mt-4">
           <ChatWindow 
             :messages="currentChatMessages" 
             :chatName="activeChat ? activeChat.name : ''" 
-            class="w-full max-w-2xl flex-grow" 
+            class="w-full max-w-4xl flex-grow mx-auto" 
           />
-          <MessageInput @send-message="sendMessage" class="w-full max-w-2xl mt-4" />
+          <MessageInput @send-message="sendMessage" class="w-full max-w-4xl mt-4 mx-auto" />
         </div>
       </div>
     </div>

@@ -1,8 +1,8 @@
 <template>
-  <div class="chat-window bg-secondary p-4 rounded-lg shadow-md overflow-y-auto h-96">
+  <div class="chat-window bg-chat-bg p-6 rounded-lg shadow-lg border-2 border-border-subtle overflow-y-auto h-96">
     <!-- Chat header -->
-    <div v-if="chatName" class="border-b border-gray-300 pb-2 mb-4">
-      <h3 class="text-lg font-semibold text-text">{{ chatName }}</h3>
+    <div v-if="chatName" class="border-b-2 border-border-subtle pb-3 mb-4">
+      <h3 class="text-lg font-semibold text-white">{{ chatName }}</h3>
     </div>
     
     <!-- Messages -->
@@ -10,7 +10,7 @@
       <div
         v-for="(message, index) in messages"
         :key="message.message_id || index"
-        class="message p-3 rounded-lg max-w-[80%]"
+        class="message p-3 rounded-lg max-w-[80%] shadow-sm"
         :class="{
           'bg-primary text-white ml-auto': isCurrentUserMessage(message),
           'bg-accent text-white': !isCurrentUserMessage(message),
@@ -26,7 +26,7 @@
     
     <!-- Empty state -->
     <div v-else class="flex items-center justify-center h-full text-center">
-      <div class="text-text opacity-60">
+      <div class="text-white opacity-80">
         <p class="text-lg mb-2">No messages yet</p>
         <p class="text-sm">Start the conversation!</p>
       </div>
