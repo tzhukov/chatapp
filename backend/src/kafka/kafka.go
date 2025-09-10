@@ -6,8 +6,8 @@ import (
 	"log"
 
 	"github.com/segmentio/kafka-go"
-	"backend/config"
-	"backend/models"
+	"src/config"
+	"src/models"
 )
 
 func Writer(msg models.Message) {

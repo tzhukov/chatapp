@@ -16,9 +16,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/xeipuuv/gojsonschema"
 
-	"backend/config"
-	"backend/kafka"
-	"backend/models"
+	"src/config"
+	"src/kafka"
+	"src/models"
 )
 
 var upgrader = websocket.Upgrader{
@@ -27,11 +27,10 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-var clients = make(map[*websocket.Conn]bool)
 var broadcast = make(chan models.Message)
 var db *sql.DB
-
 var verifier *oidc.IDTokenVerifier
+var clients = make(map[*websocket.Conn]bool)
 
 func main() {
 	log.Println("Starting application...")
