@@ -29,3 +29,16 @@ ingress:
     - hosts:
         - ingress.local
       secretName: dex-cert
+
+# Runtime configuration for the SPA (exposed via config.js ConfigMap)
+oidc:
+  issuer: https://ingress.local/dex
+  clientId: chat-app-frontend
+  redirectUri: https://ingress.local/callback
+  scopes: openid profile email offline_access
+
+api:
+  baseUrl: https://ingress.local/api
+
+ws:
+  url: wss://ingress.local/ws

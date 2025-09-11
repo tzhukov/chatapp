@@ -1,7 +1,11 @@
 update_settings(k8s_upsert_timeout_secs=600)
 
+# NOTE: Removed Python try/except (unsupported in Starlark) that attempted to define TRIGGER_MODE_MANUAL.
+# Tilt provides TRIGGER_MODE_MANUAL at runtime; IDE warnings can be ignored.
+
 load('ext://helm_resource', 'helm_resource','helm_repo')
 load('ext://namespace','namespace_create','namespace_inject')
+# Built-in functions (docker_build, k8s_yaml, k8s_resource, local_resource, helm) are provided by Tilt automatically.
 
 # Set namespace for all resources
 namespace_create('chatapp')
@@ -41,6 +45,17 @@ helm_resource(
 # Build the backend Docker image
 docker_build('backend', 'backend')
 
+# Backend unit tests (runs `go test ./...`) without blocking deploys; depends on source changes.
+local_resource(
+    name='backend-tests',
+    cmd='bash scripts/test_backend.sh',
+    deps=['backend/src','backend/src/go.mod','backend/src/go.sum'],
+    labels=['tests','backend'],
+    # Use Tilt's TriggerMode constant instead of an invalid string to fix Tiltfile error
+    # Manual trigger (Tilt built-in constant)
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
+
 
 # Deploy the backend Helm chart in chatapp namespace
 k8s_yaml(helm('backend/chart', name='backend', namespace='chatapp'))
@@ -66,6 +81,15 @@ helm_resource(
 
 # Build the frontend Docker image
 docker_build('frontend', 'frontend')
+
+# Frontend unit/integration tests (Jest). Assumes dependencies installed; install if node_modules missing.
+local_resource(
+    name='frontend-tests',
+    cmd='bash scripts/test_frontend.sh',
+    deps=['frontend/src','frontend/tests','frontend/package.json','frontend/jest.config.js','frontend/babel.config.js'],
+    labels=['tests','frontend'],
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
 
 
 

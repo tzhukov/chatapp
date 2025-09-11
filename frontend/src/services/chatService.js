@@ -1,47 +1,71 @@
 import { UserManager, WebStorageStateStore } from "oidc-client";
 
+function resolveConfig() {
+  const runtime = window.__CHATAPP_CONFIG__ || {};
+  const authority = process.env.VUE_APP_DEX_ISSUER_URL || runtime.VUE_APP_DEX_ISSUER_URL;
+  const clientId = process.env.VUE_APP_DEX_CLIENT_ID || runtime.VUE_APP_DEX_CLIENT_ID;
+  const redirectUri = process.env.VUE_APP_DEX_REDIRECT_URI || runtime.VUE_APP_DEX_REDIRECT_URI;
+  const scopes = process.env.VUE_APP_DEX_SCOPES || runtime.VUE_APP_DEX_SCOPES || "openid profile email";
+  if (!authority) {
+    throw new Error("OIDC authority not configured (VUE_APP_DEX_ISSUER_URL).");
+  }
+  return {
+    authority,
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: scopes,
+    post_logout_redirect_uri: redirectUri,
+    userStore: new WebStorageStateStore({ store: window.localStorage }),
+  };
+}
 
-const config = {
-  authority: process.env.VUE_APP_DEX_ISSUER_URL,
-  client_id: process.env.VUE_APP_DEX_CLIENT_ID,
-  redirect_uri: process.env.VUE_APP_DEX_REDIRECT_URI,
-  response_type: "code",
-  scope: process.env.VUE_APP_DEX_SCOPES,
-  post_logout_redirect_uri: process.env.VUE_APP_DEX_REDIRECT_URI,
-  userStore: new WebStorageStateStore({ store: window.localStorage }),
-};
+let userManagerInstance;
+function getUserManager() {
+  if (!userManagerInstance) {
+    userManagerInstance = new UserManager(resolveConfig());
+  }
+  return userManagerInstance;
+}
 
-const userManager = new UserManager(config);
+function apiBase() {
+  const runtime = window.__CHATAPP_CONFIG__ || {};
+  return process.env.VUE_APP_API_BASE_URL || runtime.VUE_APP_API_BASE_URL;
+}
+
+function wsBase() {
+  const runtime = window.__CHATAPP_CONFIG__ || {};
+  return process.env.VUE_APP_WS_URL || runtime.VUE_APP_WS_URL;
+}
 
 export const chatService = {
-  userManager,
+  get userManager() { return getUserManager(); },
 
   async login() {
-    return userManager.signinRedirect();
+    return getUserManager().signinRedirect();
   },
 
   async logout() {
-    return userManager.signoutRedirect();
+    return getUserManager().signoutRedirect();
   },
 
   async handleAuthentication() {
-    return userManager.signinRedirectCallback();
+    return getUserManager().signinRedirectCallback();
   },
 
   async getUser() {
-    return userManager.getUser();
+    return getUserManager().getUser();
   },
 
   async getAccessToken() {
-    const user = await userManager.getUser();
+    const user = await getUserManager().getUser();
     if (!user) return null;
-    // If token expired, try to renew using refresh token
     if (user.expired && user.refresh_token) {
       try {
-        const renewedUser = await userManager.signinSilent();
-        return renewedUser.access_token;
-      } catch (err) {
-        await userManager.signoutRedirect();
+        const renewed = await getUserManager().signinSilent();
+        return renewed.access_token;
+      } catch (e) {
+        await getUserManager().signoutRedirect();
         throw new Error("Session expired. Please log in again.");
       }
     }
@@ -50,65 +74,44 @@ export const chatService = {
 
   async getMessages() {
     const token = await this.getAccessToken();
-    if (!token) {
-      throw new Error("User not authenticated");
-    }
-    const response = await fetch(`${process.env.VUE_APP_API_BASE_URL}/messages`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+    if (!token) throw new Error("User not authenticated");
+    const response = await fetch(`${apiBase()}/messages`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (response.status === 401) {
-      await userManager.signoutRedirect();
+      await getUserManager().signoutRedirect();
       throw new Error("Session expired. Please log in again.");
     }
-    if (!response.ok) {
-      throw new Error("Failed to fetch messages");
-    }
+    if (!response.ok) throw new Error("Failed to fetch messages");
     return response.json();
   },
 
   async sendMessage(message) {
     const token = await this.getAccessToken();
-    if (!token) {
-      throw new Error("User not authenticated");
-    }
-    const response = await fetch(`${process.env.VUE_APP_API_BASE_URL}/messages`, {
+    if (!token) throw new Error("User not authenticated");
+    const response = await fetch(`${apiBase()}/messages`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(message),
     });
     if (response.status === 401) {
-      await userManager.signoutRedirect();
+      await getUserManager().signoutRedirect();
       throw new Error("Session expired. Please log in again.");
     }
-    if (!response.ok) {
-      throw new Error("Failed to send message");
-    }
+    if (!response.ok) throw new Error("Failed to send message");
     return response.json();
   },
 
   async connectWebSocket(onMessage) {
     const token = await this.getAccessToken();
-    if (!token) {
-      throw new Error("User not authenticated");
-    }
-    const socket = new WebSocket(`${process.env.VUE_APP_WS_URL}?token=${token}`);
-    socket.onopen = () => {
-      console.log("WebSocket connection established.");
-    };
-    socket.onmessage = (event) => {
-      onMessage(JSON.parse(event.data));
-    };
-    socket.onerror = (error) => {
-      console.error("WebSocket error:", error);
-    };
-    socket.onclose = (event) => {
-      if (event.wasClean) {
-        console.log(`WebSocket connection closed cleanly, code=${event.code} reason=${event.reason}`);
+    if (!token) throw new Error("User not authenticated");
+    const socket = new WebSocket(`${wsBase()}?token=${token}`);
+    socket.onopen = () => console.log("WebSocket connection established.");
+    socket.onmessage = (ev) => onMessage(JSON.parse(ev.data));
+    socket.onerror = (err) => console.error("WebSocket error:", err);
+    socket.onclose = (ev) => {
+      if (ev.wasClean) {
+        console.log(`WebSocket closed cleanly code=${ev.code} reason=${ev.reason}`);
       } else {
         console.error("WebSocket connection died");
       }

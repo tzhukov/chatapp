@@ -25,9 +25,9 @@ export default {
   },
   methods: {
     send() {
-      if (this.message.trim() !== "") {
-        console.log("Sending message from MessageInput:", this.message);
-        this.$emit("send-message", this.message);
+      const trimmed = this.message.trim();
+      if (trimmed !== "") {
+        this.$emit("send-message", trimmed);
         this.message = "";
       }
     },

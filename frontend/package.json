@@ -4,7 +4,12 @@
   "private": true,
   "scripts": {
     "serve": "vue-cli-service serve",
-    "build": "vue-cli-service build"
+    "build": "vue-cli-service build",
+    "test:unit": "jest --config jest.config.js",
+    "test": "npm run test:unit",
+    "test:ci": "CI=1 npm run test:unit",
+    "test:watch": "jest --watch",
+    "test:smoke": "node tests/smoke/liveSmoke.js"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.13",
@@ -14,8 +19,15 @@
   },
   "devDependencies": {
     "@vue/cli-service": "~5.0.0",
+  "@vue/compiler-sfc": "^3.2.13",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.13"
+    "tailwindcss": "^4.1.13",
+    "@vue/test-utils": "^2.4.5",
+    "jest": "^29.7.0",
+    "babel-jest": "^29.7.0",
+    "@babel/preset-env": "^7.24.0",
+    "@vue/vue3-jest": "^29.2.3",
+    "jest-environment-jsdom": "^29.7.0"
   }
 }

@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: API for the chat application backend service.
 servers:
-  - url: http://localhost:8080
+  - url: https://ingress.local/api
 paths:
   /messages:
     get:
@@ -61,6 +61,8 @@ paths:
                     example: enqueued
         '400':
           description: Invalid request body.
+        '413':
+          description: Message too long.
 components:
   schemas:
     Message:
