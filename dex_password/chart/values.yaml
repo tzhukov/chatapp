@@ -1,0 +1,21 @@
+image:
+  repository: auth-connector
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  grpcPort: 5557
+  httpPort: 8080
+
+env:
+  listenAddr: ":5557"
+  postgresDsn: "postgres://postgres:postgres@postgresql-postgresql.chatapp.svc.cluster.local:5432/postgres?sslmode=disable"
+  # Optional dev seed
+  seedUserEmail: ""
+  seedUserPassword: ""
+  listenHttp: ":8080"
+
+resources:
+  limits:
+    cpu: "500m"
+    memory: "512Mi"

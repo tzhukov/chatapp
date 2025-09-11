@@ -6,6 +6,13 @@ config:
     type: memory
 
   enablePasswordDB: true
+  connectors:
+    - type: authproxy
+      id: local-postgres
+      name: Local Accounts
+      config:
+        userHeader: X-Remote-User
+        groupHeader: X-Remote-Group
   # GitHub connector removed for local development. Add back by reinstating a connectors list.
   # connectors:
   #   - type: github
@@ -18,10 +25,11 @@ config:
 
   staticClients:
     - id: chat-app-frontend
+      # SPA client: redirect back to the frontend app route
       redirectURIs:
-        - https://ingress.local/dex/auth/callback
+        - https://ingress.local/callback
       name: Chat App Frontend
-      secret: CHAT_APP_FRONTEND_SECRET
+      public: true
     - id: backend
       redirectURIs:
         - https://ingress.local/dex/auth/callback

@@ -42,6 +42,25 @@ helm_resource(
     ]
 )
 
+# Postgres for Dex PasswordConnector (dev)
+helm_resource(
+    name='postgresql',
+    chart='oci://registry-1.docker.io/bitnamicharts/postgresql',
+    namespace='chatapp',
+    flags=[
+        '--set','auth.postgresPassword=postgres',
+        '--set','primary.persistence.enabled=true',
+        '--set','primary.persistence.size=1Gi',
+    '--set','readReplicas.readReplicas=0',
+    '--set','primary.resources.limits.cpu=500m',
+    '--set','primary.resources.limits.memory=512Mi'
+    ]
+)
+
+# Build and deploy auth-connector via Helm chart
+docker_build('auth-connector', 'dex_password')
+k8s_yaml(helm('dex_password/chart', name='auth-connector', namespace='chatapp'))
+
 # Build the backend Docker image
 docker_build('backend', 'backend')
 
@@ -76,8 +95,14 @@ helm_resource(
     chart='dex-repo/dex',
     resource_deps=['dex-repo'],
     namespace='chatapp',
-    flags=['--values=./dex/dex-values.yaml'],
+    flags=['--version','0.24.0','--values=./dex/dex-values.yaml',
+           '--set','config.connectors[0].type=authproxy',
+           '--set','config.connectors[0].id=local-postgres',
+           '--set','config.connectors[0].name=Local Accounts'],
     )
+
+# Ingress subroute for authproxy callback with external auth
+k8s_yaml('dex/authproxy-ingress.yaml')
 
 # Build the frontend Docker image
 docker_build('frontend', 'frontend')
@@ -90,7 +115,6 @@ local_resource(
     labels=['tests','frontend'],
     trigger_mode=TRIGGER_MODE_MANUAL
 )
-
 
 
 # Deploy the frontend Helm chart in chatapp namespace

@@ -237,3 +237,56 @@ A Golang library for JWTs (e.g., go-jwt or oidc) can automate these validation s
 
 This updated design document reflects the Kafka-first ingestion model, asynchronous persistence (202 Accepted semantics), and MongoDB indexing (unique index on message_id, secondary index on timestamp) to support scalable reads and idempotent writes.  
 Let me know if you would like to dive deeper into the specific configuration for DexIdp, such as setting up connectors or client registrations.
+
+---
+
+## Appendix A: Dex gRPC PasswordConnector (Postgres-backed)
+
+Goal: enable local username/password auth without changing the SPA or backend by adding a Dex PasswordConnector implemented as a small gRPC service backed by Postgres.
+
+Why this approach
+- Dex remains the OIDC issuer; discovery and tokens stay identical.
+- Frontend and backend code remain unchanged; only Dex adds a connector.
+- Postgres gives a simple, durable store for users and optional groups.
+
+Data model (suggested)
+- users(id UUID PK, username TEXT UNIQUE, email TEXT UNIQUE, password_hash TEXT, is_active BOOL, email_verified BOOL, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
+- user_groups(user_id UUID FK -> users.id, group_name TEXT, PRIMARY KEY(user_id, group_name))
+
+Auth flow
+1. SPA redirects to Dex as today.
+2. User selects “Local Accounts” on the Dex login page and submits username/password.
+3. Dex calls the PasswordConnector over gRPC.
+4. Connector verifies bcrypt hash from Postgres, returns subject, username, email, groups.
+5. Dex issues tokens; SPA continues unchanged.
+
+Connector service (overview)
+- Implements Dex’s gRPC PasswordConnector API (Go recommended).
+- Env: POSTGRES_DSN, BCRYPT_COST, LOG_LEVEL, TLS opts.
+- Behavior: rate-limit, lockout after N failures, audit logs; return consistent subject (stable UUID).
+
+Dex configuration (illustrative)
+```yaml
+connectors:
+  - type: grpc
+    id: local-postgres
+    name: Local Accounts
+    config:
+      host: auth-connector.chatapp.svc.cluster.local:5557
+      insecure: true  # dev only; use TLS in prod
+```
+
+Deployment (dev via Tilt)
+- Add Bitnami PostgreSQL chart (PVC, simple auth).
+- Add `auth-connector` Deployment/Service (Go container exposing :5557).
+- Update Dex Helm values to include the gRPC connector.
+- Seed demo users via a one-off Job or migration in the connector init.
+
+Security notes
+- Use bcrypt cost 10–12; avoid plaintext storage.
+- Consider per-IP and per-username throttling.
+- Prefer mTLS between Dex and connector outside of dev.
+
+Rollout strategy
+- Feature gate in Tilt to enable/disable the connector.
+- Keep `enablePasswordDB: true` for fallback during initial testing; later set to false.

@@ -34,7 +34,7 @@ ingress:
 oidc:
   issuer: https://ingress.local/dex
   clientId: chat-app-frontend
-  redirectUri: https://ingress.local/callback
+  redirectUri: https://ingress.local/callback  # must match Dex staticClients.redirectURIs
   scopes: openid profile email offline_access
 
 api:

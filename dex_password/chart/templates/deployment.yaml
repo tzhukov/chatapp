@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "auth-connector.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "auth-connector.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "auth-connector.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "auth-connector.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: auth-connector
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: LISTEN_ADDR
+              value: {{ .Values.env.listenAddr | quote }}
+            - name: LISTEN_HTTP
+              value: {{ .Values.env.listenHttp | quote }}
+            - name: POSTGRES_DSN
+              value: {{ .Values.env.postgresDsn | quote }}
+            {{- if .Values.env.seedUserEmail }}
+            - name: SEED_USER_EMAIL
+              value: {{ .Values.env.seedUserEmail | quote }}
+            {{- end }}
+            {{- if .Values.env.seedUserPassword }}
+            - name: SEED_USER_PASSWORD
+              value: {{ .Values.env.seedUserPassword | quote }}
+            {{- end }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.service.grpcPort }}
+            - name: http
+              containerPort: {{ .Values.service.httpPort }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

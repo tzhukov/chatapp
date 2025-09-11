@@ -1,0 +1,59 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dex-authproxy-callback
+  namespace: chatapp
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-connector-auth-connector.chatapp.svc.cluster.local:8080/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://ingress.local/login?rd=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Remote-User, X-Remote-Email"
+    cert-manager.io/cluster-issuer: acme
+spec:
+  tls:
+    - hosts:
+        - ingress.local
+      secretName: dex-cert
+  rules:
+    - host: ingress.local
+      http:
+        paths:
+          - path: /dex/callback/local-postgres
+            pathType: Prefix
+            backend:
+              service:
+                name: dex
+                port:
+                  number: 5556
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auth-connector-login
+  namespace: chatapp
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: acme
+spec:
+  tls:
+    - hosts:
+        - ingress.local
+      secretName: dex-cert
+  rules:
+    - host: ingress.local
+      http:
+        paths:
+          - path: /login
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-connector-auth-connector
+                port:
+                  number: 8080
+          - path: /register
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-connector-auth-connector
+                port:
+                  number: 8080
