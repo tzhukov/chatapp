@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.headersConfigMapName }}
+  namespace: {{ .Release.Namespace }}
+data:
+  Cookie: $http_cookie
+  X-Original-URI: $request_uri
+  X-Original-Method: $request_method

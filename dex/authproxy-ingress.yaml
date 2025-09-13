@@ -1,15 +1,18 @@
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: dex-authproxy-callback
+  name: dex-authproxy
   namespace: chatapp
   annotations:
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/auth-url: "http://auth-connector-auth-connector.chatapp.svc.cluster.local:8080/auth"
-    nginx.ingress.kubernetes.io/auth-signin: "https://ingress.local/login?rd=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "X-Remote-User, X-Remote-Email"
-    cert-manager.io/cluster-issuer: acme
+  kubernetes.io/ingress.class: nginx
+  nginx.ingress.kubernetes.io/auth-url: "http://auth-connector-auth-connector.chatapp.svc.cluster.local:8080/auth"
+  nginx.ingress.kubernetes.io/auth-signin: "https://ingress.local/login?rd=$escaped_request_uri"
+  nginx.ingress.kubernetes.io/auth-response-headers: "X-Remote-User, X-Remote-Email"
+  nginx.ingress.kubernetes.io/auth-proxy-set-headers: "chatapp/dex-authproxy-headers"
+  cert-manager.io/cluster-issuer: acme
 spec:
+  ingressClassName: nginx
   tls:
     - hosts:
         - ingress.local
@@ -18,6 +21,13 @@ spec:
     - host: ingress.local
       http:
         paths:
+          - path: /dex/auth/local-postgres
+            pathType: Prefix
+            backend:
+              service:
+                name: dex
+                port:
+                  number: 5556
           - path: /dex/callback/local-postgres
             pathType: Prefix
             backend:
@@ -35,6 +45,7 @@ metadata:
     kubernetes.io/ingress.class: nginx
     cert-manager.io/cluster-issuer: acme
 spec:
+  ingressClassName: nginx
   tls:
     - hosts:
         - ingress.local
@@ -49,11 +60,11 @@ spec:
               service:
                 name: auth-connector-auth-connector
                 port:
-                  number: 8080
+                  name: http
           - path: /register
             pathType: Prefix
             backend:
               service:
                 name: auth-connector-auth-connector
                 port:
-                  number: 8080
+                  name: http

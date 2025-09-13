@@ -39,3 +39,17 @@ func (h *Hub) Broadcast(msg interface{}) {
 		}
 	}
 }
+
+// BroadcastExcept sends the message to all connected clients except the provided connection.
+func (h *Hub) BroadcastExcept(msg interface{}, except *websocket.Conn) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.clients {
+		if c == except {
+			continue
+		}
+		if err := c.WriteJSON(msg); err != nil {
+			logger.Error("websocket write error", err, logger.FieldKV("remote_addr", c.RemoteAddr().String()))
+		}
+	}
+}

@@ -42,3 +42,9 @@ coverage/
 # Cache
 .cache/
 .parcel-cache/
+
+# Keys
+*.pem
+*.key
+*.crt
+dex/dex-support/local-values.yaml

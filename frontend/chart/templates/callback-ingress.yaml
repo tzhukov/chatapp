@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-callback
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/instance: frontend
+    app.kubernetes.io/managed-by: tilt
+    helm.sh/chart: frontend-0.1.0
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - ingress.local
+      secretName: dex-cert
+  rules:
+    - host: ingress.local
+      http:
+        paths:
+          - path: /callback
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

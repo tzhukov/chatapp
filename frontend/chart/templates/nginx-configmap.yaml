@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-nginx-conf
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/instance: frontend
+    app.kubernetes.io/managed-by: tilt
+    helm.sh/chart: frontend-0.1.0
+  namespace: chatapp
+data:
+  default.conf: |
+    server {
+      listen 80;
+      server_name _;
+
+      root /usr/share/nginx/html;
+      index index.html;
+
+      # SPA fallback: send all routes to index.html
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+
+      location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|ico|woff2?)$ {
+        try_files $uri =404;
+        expires 7d;
+        add_header Cache-Control "public";
+      }
+    }

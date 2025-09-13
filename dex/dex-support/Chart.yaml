@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dex-support
+description: Support resources for Dex (authproxy ingress, headers, CA/TLS secrets)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

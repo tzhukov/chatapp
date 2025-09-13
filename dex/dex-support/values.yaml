@@ -1,0 +1,27 @@
+namespace: chatapp
+
+host: ingress.local
+certSecretName: dex-cert
+
+authProxy:
+  enabled: true
+  connectorId: local-postgres
+  dexServiceName: dex
+  dexServicePort: 5556
+  authConnectorService: auth-connector-auth-connector
+  authConnectorHttpPortName: http
+  signinPath: /login
+
+headersConfigMapName: dex-authproxy-headers
+
+secrets:
+  create: true
+  caBundleName: dex-ca-bundle
+  # One of caCrt (inline) or caCrtFile (path within chart) should be set
+  caCrt: ""
+  caCrtFile: ""
+  # Provide either inline content or file path within chart
+  tlsCrt: ""
+  tlsCrtFile: ""
+  tlsKey: ""
+  tlsKeyFile: ""

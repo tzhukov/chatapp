@@ -112,6 +112,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.producer.Publish(r.Context(), msg); err != nil {
 				logger.Error("publish fail", err)
+				// Fallback: directly broadcast and persist so connected clients aren't blocked by Kafka
+				s.hub.BroadcastExcept(msg, conn)
+				if s.repo != nil {
+					if perr := s.repo.InsertMessage(context.Background(), msg); perr != nil {
+						logger.Error("fallback persist fail", perr)
+					}
+				}
+				metrics.IncMsgIngested()
 				continue
 			}
 			metrics.IncMsgIngested()
@@ -142,7 +150,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := s.producer.Publish(r.Context(), msg); err != nil {
-			http.Error(w, "enqueue failed", http.StatusInternalServerError)
+			// Fallback: broadcast and persist immediately if enqueue fails
+			s.hub.Broadcast(msg)
+			if s.repo != nil {
+				_ = s.repo.InsertMessage(r.Context(), msg)
+			}
+			metrics.IncMsgIngested()
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message_id": msg.MessageID, "status": "broadcasted-fallback"})
 			return
 		}
 		metrics.IncMsgIngested()

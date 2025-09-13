@@ -1,0 +1,69 @@
+{{- if .Values.authProxy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dex-authproxy
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/auth-url: "http://{{ .Values.authProxy.authConnectorService }}.{{ .Release.Namespace }}.svc.cluster.local:8080/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://{{ .Values.host }}{{ .Values.authProxy.signinPath }}?rd=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Remote-User, X-Remote-Email"
+    nginx.ingress.kubernetes.io/auth-proxy-set-headers: "{{ .Release.Namespace }}/{{ .Values.headersConfigMapName }}"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - {{ .Values.host }}
+      secretName: {{ .Values.certSecretName }}
+  rules:
+    - host: {{ .Values.host }}
+      http:
+        paths:
+          - path: /dex/auth/{{ .Values.authProxy.connectorId }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.authProxy.dexServiceName }}
+                port:
+                  number: {{ .Values.authProxy.dexServicePort }}
+          - path: /dex/callback/{{ .Values.authProxy.connectorId }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.authProxy.dexServiceName }}
+                port:
+                  number: {{ .Values.authProxy.dexServicePort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auth-connector-login
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - {{ .Values.host }}
+      secretName: {{ .Values.certSecretName }}
+  rules:
+    - host: {{ .Values.host }}
+      http:
+        paths:
+          - path: {{ .Values.authProxy.signinPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.authProxy.authConnectorService }}
+                port:
+                  name: {{ .Values.authProxy.authConnectorHttpPortName }}
+          - path: /register
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.authProxy.authConnectorService }}
+                port:
+                  name: {{ .Values.authProxy.authConnectorHttpPortName }}
+{{- end }}

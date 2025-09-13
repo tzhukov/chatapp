@@ -1,7 +1,7 @@
 image:
   repository: backend
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Never
 
 service:
   type: ClusterIP
@@ -11,14 +11,18 @@ env:
   DEX_ISSUER_URL: "https://ingress.local/dex"
   DEX_ISSUER_INTERNAL_DIAL: "ingress-nginx-controller.ingress-nginx.svc.cluster.local:443"
   DEX_ISSUER_DIAL_ADDRESS: "ingress-nginx-controller.ingress-nginx.svc.cluster.local:443"
+  # Ensure fallback issuer matches Dex advertised issuer (or disable fallback)
+  DEX_INTERNAL_ISSUER_URL: "https://ingress.local/dex"
+  DEX_OIDC_FALLBACK_ENABLED: "false"
+  DEX_OIDC_DEBUG: "true"
 
 resources:
   limits:
-    cpu: 500m
-    memory: 512Mi
-  requests:
-    cpu: 200m
+    cpu: 250m
     memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
 
 # Optional custom CA secret mounting (provide a secret with key ca.crt)
 customCA:

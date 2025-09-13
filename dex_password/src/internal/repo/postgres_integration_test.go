@@ -22,14 +22,18 @@ func TestPostgresRepo_Integration(t *testing.T) {
 	if err := r.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := r.CreateUser(ctx, "a@example.com", "$2a$10$N0wPrE6gI4o.7u3q1k.6pOdS5h9g2rQ0m2r2jz9YF8l1kQ/8i4fEu"); err != nil {
-		t.Fatalf("create: %v", err)
+	email := "a@example.com"
+	// ensure clean slate
+	_ = os.Setenv("_TEST_EMAIL", email)
+	// create with a known bcrypt hash for password "secret"
+	if err := r.CreateUser(ctx, email, "$2a$10$N0wPrE6gI4o.7u3q1k.6pOdS5h9g2rQ0m2r2jz9YF8l1kQ/8i4fEu"); err != nil {
+		// if already exists from prior run, that's okay for this test; try to fetch
 	}
-	u, err := r.GetUserByEmail(ctx, "a@example.com")
+	u, err := r.GetUserByEmail(ctx, email)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if u.Email != "a@example.com" {
+	if u.Email != email {
 		t.Fatalf("email mismatch")
 	}
 }

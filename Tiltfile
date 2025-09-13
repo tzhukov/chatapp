@@ -17,10 +17,10 @@ helm_resource(
     flags=['--set', 'kraft.enabled=true',
            '--set', 'zookeeper.enabled=true',
            '--set', 'listeners.client.protocol=PLAINTEXT',
-           '--set','resources.limits.cpu=500m',
-           '--set','resources.limits.memory=512Mi',
-           '--set','resources.requests.cpu=200m',
-           '--set','resources.requests.memory=256Mi']
+           '--set','resources.limits.cpu=250m',
+           '--set','resources.limits.memory=256Mi',
+           '--set','resources.requests.cpu=100m',
+           '--set','resources.requests.memory=128Mi']
 )
 
 k8s_yaml('mongo/pvc.yaml')
@@ -52,17 +52,35 @@ helm_resource(
         '--set','primary.persistence.enabled=true',
         '--set','primary.persistence.size=1Gi',
     '--set','readReplicas.readReplicas=0',
-    '--set','primary.resources.limits.cpu=500m',
-    '--set','primary.resources.limits.memory=512Mi'
+    '--set','primary.resources.limits.cpu=250m',
+    '--set','primary.resources.limits.memory=256Mi',
+    '--set','primary.resources.requests.cpu=100m',
+    '--set','primary.resources.requests.memory=128Mi'
     ]
 )
 
+helm_repo('dex-repo', 'https://charts.dexidp.io')
+
+# Deploy Authelia from the official Helm chart repo
+
+helm_resource(
+    name='dex',
+    chart='dex-repo/dex',
+    resource_deps=['dex-repo'],
+    namespace='chatapp',
+    flags=['--version','0.24.0','--values=./dex/dex-values.yaml',
+           '--set','config.connectors[0].type=authproxy',
+           '--set','config.connectors[0].id=local-postgres',
+           '--set','config.connectors[0].name=Local Accounts'],
+    )
+
+
 # Build and deploy auth-connector via Helm chart
 docker_build('auth-connector', 'dex_password')
-k8s_yaml(helm('dex_password/chart', name='auth-connector', namespace='chatapp'))
+# Build the backend Docker image with explicit latest tag to match chart
+docker_build('backend:latest', 'backend')
 
-# Build the backend Docker image
-docker_build('backend', 'backend')
+
 
 # Backend unit tests (runs `go test ./...`) without blocking deploys; depends on source changes.
 local_resource(
@@ -78,31 +96,27 @@ local_resource(
 
 # Deploy the backend Helm chart in chatapp namespace
 k8s_yaml(helm('backend/chart', name='backend', namespace='chatapp'))
+# Deploy the auth-connector Helm chart in chatapp namespace
+k8s_yaml(helm('dex_password/chart', name='auth-connector', namespace='chatapp'))
+# Deploy the frontend Helm chart in chatapp namespace
+k8s_yaml(helm('frontend/chart', name='frontend', namespace='chatapp'))
 
-# Deploy Keycloak from the public Helm chart
-
-
-# Deploy Authelia from the public Helm chart
-
-helm_repo('dex-repo', 'https://charts.dexidp.io')
-
-
-# Deploy Authelia from the official Helm chart repo
-
-
+# Deploy dex-support chart (authproxy + secrets) using helm_resource (supports flags)
 helm_resource(
-    name='dex',
-    chart='dex-repo/dex',
-    resource_deps=['dex-repo'],
+    name='dex-support',
+    chart='dex/dex-support',
     namespace='chatapp',
-    flags=['--version','0.24.0','--values=./dex/dex-values.yaml',
-           '--set','config.connectors[0].type=authproxy',
-           '--set','config.connectors[0].id=local-postgres',
-           '--set','config.connectors[0].name=Local Accounts'],
-    )
+    resource_deps=['dex'],
+    flags=[
+        '--set', 'secrets.create=true',
+        '--set-file', 'secrets.caCrt=./ca.crt',
+        '--set-file', 'secrets.tlsCrt=./ingress.local.pem',
+        '--set-file', 'secrets.tlsKey=./ingress.local-key.pem',
+    ]
+)
 
-# Ingress subroute for authproxy callback with external auth
-k8s_yaml('dex/authproxy-ingress.yaml')
+
+
 
 # Build the frontend Docker image
 docker_build('frontend', 'frontend')
@@ -115,12 +129,3 @@ local_resource(
     labels=['tests','frontend'],
     trigger_mode=TRIGGER_MODE_MANUAL
 )
-
-
-# Deploy the frontend Helm chart in chatapp namespace
-k8s_yaml(helm('frontend/chart', name='frontend', namespace='chatapp'))
-
-#Port forwards
-k8s_resource(workload='frontend', port_forwards=[8081])
-# k8s_resource(workload='dex', port_forwards=[9091])
-# k8s_resource(workload='backend', port_forwards=[8082])

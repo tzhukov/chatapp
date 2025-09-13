@@ -1,11 +1,10 @@
 <template>
-  <div id="app" class="bg-background h-screen flex text-text">
-    <div v-if="!isAuthenticated" class="w-full h-full flex items-center justify-center">
-      <button @click="login" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
-        Login
-      </button>
+  <div id="app" class="bg-background h-screen flex flex-col text-text">
+    <Topbar :user="user" @logout="logout" @login="login" />
+    <div v-if="!isAuthenticated" class="w-full flex-1 flex items-center justify-center">
+      <!-- Login button now lives in Topbar next to Register -->
     </div>
-    <div v-else class="w-full h-full flex">
+    <div v-else class="w-full flex-1 flex">
       <Sidebar 
         :chats="chats" 
         :activeChat="activeChat" 
@@ -13,8 +12,7 @@
         @createChat="createChat" 
       />
       <!-- Main Content -->
-      <div class="flex-grow flex flex-col px-6 py-4 bg-gray-100 min-h-screen">
-        <Topbar :user="user" @logout="logout" />
+      <div class="flex-grow flex flex-col px-6 py-4 bg-gray-100 min-h-0">
         <div class="flex-grow flex flex-col mt-4">
           <ChatWindow 
             :messages="currentChatMessages" 

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dex-authproxy-headers
+  namespace: chatapp
+data:
+  # Forward the original request cookies to the auth backend so it can read the session
+  Cookie: $http_cookie
+  # Optional extras that can help debugging/auth backends
+  X-Original-URI: $request_uri
+  X-Original-Method: $request_method

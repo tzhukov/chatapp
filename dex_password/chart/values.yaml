@@ -9,7 +9,8 @@ service:
 
 env:
   listenAddr: ":5557"
-  postgresDsn: "postgres://postgres:postgres@postgresql-postgresql.chatapp.svc.cluster.local:5432/postgres?sslmode=disable"
+  # Use the actual Postgres Service DNS name (per current Helm release, it's 'postgresql')
+  postgresDsn: "postgres://postgres:postgres@postgresql.chatapp.svc.cluster.local:5432/postgres?sslmode=disable"
   # Optional dev seed
   seedUserEmail: ""
   seedUserPassword: ""
@@ -17,5 +18,8 @@ env:
 
 resources:
   limits:
-    cpu: "500m"
-    memory: "512Mi"
+    cpu: "200m"
+    memory: "128Mi"
+  requests:
+    cpu: "100m"
+    memory: "64Mi"
