@@ -1,8 +1,9 @@
 <template>
   <div class="w-full bg-topbar-bg p-4 flex items-center justify-between shadow-lg border-b-2 border-border-subtle text-white">
     <div class="text-lg font-semibold">Chat App</div>
-    <div v-if="user">
-      <span class="mr-4 font-medium">Welcome, {{ user.profile.name }}</span>
+    <div v-if="user" class="flex items-center gap-2">
+      <button @click="$emit('toggle-health')" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-3 rounded shadow-md">Health</button>
+      <span class="mx-2 font-medium">Welcome, {{ user.profile.name }}</span>
       <button @click="$emit('logout')" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded shadow-md transition-colors duration-200">
         Logout
       </button>
@@ -23,7 +24,7 @@ export default {
       default: null,
     },
   },
-  emits: ['logout','login'],
+  emits: ['logout','login','toggle-health'],
   methods: {
     goRegister() {
       window.location.href = 'https://ingress.local/register';

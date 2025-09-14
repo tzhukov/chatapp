@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChatMessage",
+  "type": "object",
+  "properties": {
+    "message_id": { "type": "string" },
+    "user_id": { "type": "string" },
+    "content": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" }
+  },
+  "required": ["message_id", "user_id", "content", "timestamp"]
+}

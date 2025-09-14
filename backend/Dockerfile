@@ -3,6 +3,8 @@ WORKDIR /src
 COPY src/go.mod src/go.sum ./
 RUN go mod download
 COPY src/ .
+# Ensure module files are in sync with Go 1.24 after sources are present
+RUN go mod tidy
 # Build a static binary for linux/amd64
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 	go build -trimpath -ldflags "-s -w" -o /out/main main.go

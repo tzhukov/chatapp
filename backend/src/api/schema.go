@@ -22,19 +22,36 @@ func NewMessageValidator(schemaPath string) *MessageValidator {
 	return &MessageValidator{path: schemaPath}
 }
 
+const defaultSchema = `{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"title": "ChatMessage",
+	"type": "object",
+	"properties": {
+		"message_id": { "type": "string" },
+		"user_id": { "type": "string" },
+		"content": { "type": "string" },
+		"chat_id": { "type": "integer" },
+		"timestamp": { "type": "string", "format": "date-time" }
+	},
+	"required": ["message_id", "user_id", "content", "timestamp"]
+}`
+
 func (v *MessageValidator) load() {
-	data, err := os.ReadFile(v.path)
-	if err != nil {
-		v.err = fmt.Errorf("read schema: %w", err)
-		return
+	var loader gojsonschema.JSONLoader
+	if v.path != "" {
+		if _, err := os.Stat(v.path); err == nil {
+			tmp := filepath.ToSlash(v.path)
+			loader = gojsonschema.NewReferenceLoader("file://" + tmp)
+		}
 	}
-	tmp := filepath.ToSlash(v.path)
-	loader := gojsonschema.NewReferenceLoader("file://" + tmp)
+	if loader == nil {
+		// fallback to embedded schema
+		loader = gojsonschema.NewStringLoader(defaultSchema)
+	}
 	v.schema, v.err = gojsonschema.NewSchema(loader)
 	if v.err != nil {
 		v.err = fmt.Errorf("compile schema: %w", v.err)
 	}
-	_ = data // keep for potential future hashing/versioning
 }
 
 func (v *MessageValidator) Validate(doc interface{}) error {

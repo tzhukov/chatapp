@@ -101,12 +101,11 @@ k8s_yaml(helm('dex_password/chart', name='auth-connector', namespace='chatapp'))
 # Deploy the frontend Helm chart in chatapp namespace
 k8s_yaml(helm('frontend/chart', name='frontend', namespace='chatapp'))
 
-# Deploy dex-support chart (authproxy + secrets) using helm_resource (supports flags)
+# Deploy dex-support chart (authproxy + secrets)
 helm_resource(
     name='dex-support',
     chart='dex/dex-support',
     namespace='chatapp',
-    resource_deps=['dex'],
     flags=[
         '--set', 'secrets.create=true',
         '--set-file', 'secrets.caCrt=./ca.crt',

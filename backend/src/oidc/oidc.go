@@ -28,24 +28,12 @@ func Init(ctx context.Context) (*coreoidc.Provider, *coreoidc.IDTokenVerifier) {
 	return p, verifier
 }
 
-// VerifyToken verifies a raw token using the provided verifier and validates audience & expiration.
+// VerifyToken verifies a raw token using the provided verifier. Audience and expiry
+// are enforced by go-oidc according to the verifier config (ClientID).
 func VerifyToken(ctx context.Context, verifier *coreoidc.IDTokenVerifier, raw string) (*coreoidc.IDToken, error) {
 	tok, err := verifier.Verify(ctx, raw)
 	if err != nil {
 		return nil, err
-	}
-	var claims struct {
-		Aud string `json:"aud"`
-		Exp int64  `json:"exp"`
-	}
-	if err := tok.Claims(&claims); err != nil {
-		return nil, err
-	}
-	if claims.Aud != config.Audience {
-		return nil, ErrInvalidAudience{Expected: config.Audience, Got: claims.Aud}
-	}
-	if time.Now().Unix() > claims.Exp {
-		return nil, ErrTokenExpired{}
 	}
 	return tok, nil
 }
@@ -72,15 +60,14 @@ func AuthMiddleware(verifier *coreoidc.IDTokenVerifier) func(http.Handler) http.
 
 // Errors
 
+// Deprecated: custom audience/expiry errors were removed in favor of go-oidc checks.
 type ErrInvalidAudience struct{ Expected, Got string }
 
-func (e ErrInvalidAudience) Error() string {
-	return "invalid audience: expected " + e.Expected + " got " + e.Got
-}
+func (e ErrInvalidAudience) Error() string { return "invalid audience: deprecated" }
 
 type ErrTokenExpired struct{}
 
-func (e ErrTokenExpired) Error() string { return "token expired" }
+func (e ErrTokenExpired) Error() string { return "token expired: deprecated" }
 
 // Internal backoff + fallback logic (moved from main)
 func initProviderWithBackoff(ctx context.Context, issuer string) *coreoidc.Provider {
@@ -144,15 +131,45 @@ func initProviderWithBackoff(ctx context.Context, issuer string) *coreoidc.Provi
 			if config.DexCACertFile != "" {
 				addCustomCA(httpClient, config.DexCACertFile)
 			}
+			// Dev override: skip TLS verify if explicitly enabled
+			if strings.EqualFold(config.DexOIDCInsecureSkipVerify, "true") {
+				tr, _ := httpClient.Transport.(*http.Transport)
+				if tr == nil {
+					tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
+				}
+				if tr.TLSClientConfig == nil {
+					tr.TLSClientConfig = &tls.Config{}
+				}
+				tr.TLSClientConfig.InsecureSkipVerify = true
+				httpClient.Transport = tr
+			}
 			provider, err = coreoidc.NewProvider(coreoidc.ClientContext(ctx, httpClient), issuer)
 		} else {
 			if config.DexCACertFile != "" {
 				// Build custom client with CA
 				c := &http.Client{Timeout: 10 * time.Second}
 				addCustomCA(c, config.DexCACertFile)
+				if strings.EqualFold(config.DexOIDCInsecureSkipVerify, "true") {
+					tr, _ := c.Transport.(*http.Transport)
+					if tr == nil {
+						tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
+					}
+					if tr.TLSClientConfig == nil {
+						tr.TLSClientConfig = &tls.Config{}
+					}
+					tr.TLSClientConfig.InsecureSkipVerify = true
+					c.Transport = tr
+				}
 				provider, err = coreoidc.NewProvider(coreoidc.ClientContext(ctx, c), issuer)
 			} else {
-				provider, err = coreoidc.NewProvider(ctx, issuer)
+				if strings.EqualFold(config.DexOIDCInsecureSkipVerify, "true") {
+					c := &http.Client{Timeout: 10 * time.Second}
+					tr := &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+					c.Transport = tr
+					provider, err = coreoidc.NewProvider(coreoidc.ClientContext(ctx, c), issuer)
+				} else {
+					provider, err = coreoidc.NewProvider(ctx, issuer)
+				}
 			}
 		}
 		if err == nil {

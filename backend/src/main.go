@@ -68,6 +68,10 @@ func main() {
 	http.HandleFunc("/healthz", handleHealth)
 	http.HandleFunc("/readyz", handleReady)
 	http.HandleFunc("/metrics", metrics.Handler)
+	// API-prefixed routes for ingress routing
+	http.HandleFunc("/api/healthz", handleHealth)
+	http.HandleFunc("/api/readyz", handleReady)
+	http.HandleFunc("/api/metrics", metrics.Handler)
 	http.Handle("/", server) // server handles its subpaths
 
 	logger.Info("http server listening", logger.FieldKV("port", config.ApiPort))

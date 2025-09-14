@@ -11,10 +11,17 @@ paths:
       tags:
         - messages
       summary: Retrieve message history
-      description: Returns a list of all messages in the chat history.
+      description: Returns a list of messages. When `chat_id` is provided, filters to that chat.
       operationId: getMessages
       security:
         - bearerAuth: []
+      parameters:
+        - in: query
+          name: chat_id
+          schema:
+            type: integer
+          required: false
+          description: Optional chat room identifier to filter messages.
       responses:
         '200':
           description: A list of messages.
@@ -39,6 +46,9 @@ paths:
             schema:
               type: object
               properties:
+                chat_id:
+                  type: integer
+                  description: The chat room identifier (1=General).
                 user_id:
                   type: string
                   description: The ID of the user sending the message.
@@ -77,6 +87,9 @@ components:
         content:
           type: string
           description: The message text.
+        chat_id:
+          type: integer
+          description: The chat room identifier.
         timestamp:
           type: string
           format: date-time

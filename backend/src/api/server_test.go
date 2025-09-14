@@ -20,6 +20,13 @@ func (m *mockRepo) InsertMessage(ctx context.Context, msg models.Message) error 
 func (m *mockRepo) GetAllMessages(ctx context.Context) ([]models.Message, error) {
 	return []models.Message{}, nil
 }
+func (m *mockRepo) GetMessagesByChatID(ctx context.Context, id int) ([]models.Message, error) {
+	return []models.Message{}, nil
+}
+func (m *mockRepo) ListRooms(ctx context.Context) ([]models.ChatRoom, error) {
+	return []models.ChatRoom{}, nil
+}
+func (m *mockRepo) CreateRoom(ctx context.Context, r models.ChatRoom) error { return nil }
 
 type mockVerifier struct{ deny bool }
 

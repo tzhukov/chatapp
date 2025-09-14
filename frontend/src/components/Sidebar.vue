@@ -1,5 +1,5 @@
 <template>
-  <div class="w-1/4 bg-sidebar-bg p-4 shadow-lg border-r-2 border-border-subtle flex flex-col text-white min-h-screen">
+  <div class="w-1/4 bg-sidebar-bg p-3 shadow-lg border-r-2 border-border-subtle flex flex-col text-white min-h-screen">
     <div class="flex justify-between items-center mb-4">
       <h2 class="text-xl font-bold">Chats</h2>
       <button 
@@ -12,31 +12,31 @@
     </div>
     
     <!-- Chat List -->
-    <div class="flex-grow overflow-y-auto space-y-2">
+  <div class="flex-grow overflow-y-auto space-y-1">
       <div
         v-for="chat in sortedChats"
         :key="chat.id"
         @click="$emit('selectChat', chat)"
-        class="p-3 rounded-lg cursor-pointer transition-all duration-200 hover:bg-opacity-20 hover:bg-white shadow-sm border border-opacity-30 border-white"
+  class="px-2 py-2 rounded-md cursor-pointer transition-all duration-150 hover:bg-opacity-20 hover:bg-white shadow-sm border border-opacity-20 border-white"
         :class="{
           'bg-primary bg-opacity-40 border-l-4 border-primary shadow-md': isActiveChat(chat),
           'bg-transparent': !isActiveChat(chat)
         }"
       >
-        <div class="flex justify-between items-start">
+        <div class="flex justify-between items-center">
           <div class="flex-grow min-w-0 pr-2">
-            <h3 class="font-semibold text-sm break-words" :class="{ 'text-primary': isActiveChat(chat) }">
+            <h3 class="font-semibold text-sm break-words leading-tight" :class="{ 'text-primary': isActiveChat(chat) }">
               {{ chat.name }}
             </h3>
-            <p class="text-xs opacity-70 break-words mt-1">
+            <p class="text-[11px] opacity-70 break-words mt-0.5">
               {{ getLastMessagePreview(chat) }}
             </p>
-            <p class="text-xs opacity-50 mt-1">
+            <p class="text-[11px] opacity-50 mt-0.5">
               {{ formatLastActivity(chat.lastActivity) }}
             </p>
           </div>
           <div v-if="chat.unreadCount > 0" class="ml-2 flex-shrink-0">
-            <span class="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full min-w-[20px] text-center shadow-sm">
+            <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center shadow-sm">
               {{ chat.unreadCount > 99 ? '99+' : chat.unreadCount }}
             </span>
           </div>

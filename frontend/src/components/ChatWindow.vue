@@ -1,26 +1,29 @@
 <template>
-  <div class="chat-window bg-chat-bg p-6 rounded-lg shadow-lg border-2 border-border-subtle overflow-y-auto h-96">
+  <div class="chat-window bg-chat-bg p-6 rounded-lg shadow-lg border-2 border-border-subtle overflow-y-auto min-h-0">
     <!-- Chat header -->
     <div v-if="chatName" class="border-b-2 border-border-subtle pb-3 mb-4">
       <h3 class="text-lg font-semibold text-white">{{ chatName }}</h3>
     </div>
     
     <!-- Messages -->
-    <div v-if="messages.length > 0" class="space-y-3">
+    <div v-if="messages.length > 0" class="space-y-2">
       <div
         v-for="(message, index) in messages"
         :key="message.message_id || index"
-        class="message p-3 rounded-lg max-w-[80%] shadow-sm"
-        :class="{
-          'bg-primary text-white ml-auto': isCurrentUserMessage(message),
-          'bg-accent text-white': !isCurrentUserMessage(message),
-        }"
+        class="flex w-full"
       >
-        <span class="font-bold block text-sm opacity-80">{{ message.user_id }}:</span>
-        <span class="block text-base">{{ message.content }}</span>
-        <span v-if="message.timestamp" class="block text-xs opacity-60 mt-1">
-          {{ formatTimestamp(message.timestamp) }}
-        </span>
+        <div
+          class="px-3 py-2 rounded-lg max-w-[80%] shadow-sm text-sm flex items-center gap-2"
+          :class="[
+            isCurrentUserMessage(message) ? 'bg-primary text-white ml-auto' : 'bg-accent text-white mr-auto',
+            message.pending ? 'opacity-70' : ''
+          ]"
+        >
+          <span class="opacity-70">{{ formatTimestamp(message.timestamp) }}</span>
+          <span class="font-semibold">{{ message.user_id }}:</span>
+          <span class="whitespace-pre-line">{{ message.content }}</span>
+          <span v-if="message.pending" class="italic opacity-70">(sending…)</span>
+        </div>
       </div>
     </div>
     

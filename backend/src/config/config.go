@@ -20,6 +20,8 @@ var (
 	DexOIDCMaxAttempts = GetEnv("DEX_OIDC_MAX_ATTEMPTS", "8")
 	// Enable extra debug logging for OIDC discovery.
 	DexOIDCDebug = GetEnv("DEX_OIDC_DEBUG", "false")
+	// Development-only: allow skipping TLS verification for OIDC discovery
+	DexOIDCInsecureSkipVerify = GetEnv("DEX_OIDC_INSECURE_SKIP_VERIFY", "false")
 	// Optional path to a PEM encoded CA certificate bundle used to trust the Dex issuer (for custom/self-signed CA).
 	DexCACertFile = GetEnv("DEX_CA_CERT_FILE", "")
 	ClientID      = GetEnv("DEX_CLIENT_ID", "backend")

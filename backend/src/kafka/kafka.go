@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sync"
 	"time"
 
@@ -89,36 +90,60 @@ func DLQWriter(ctx context.Context, msg models.Message, reason string) error {
 // Reader consumes messages until context cancellation.
 func Reader(ctx context.Context, broadcast chan<- models.Message) {
 	logger.Info("starting kafka reader", logger.FieldKV("topic", config.Topic))
-	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:   []string{config.KafkaBroker},
-		Topic:     config.Topic,
-		Partition: 0,
-		MinBytes:  10e3,
-		MaxBytes:  10e6,
-	})
-	defer func() {
+	// Outer loop recreates the reader on terminal/transient errors like EOF or broker resets
+	for {
+		// Use a consumer group to subscribe to all partitions.
+		// Start from the end to avoid replaying historical messages on (re)start.
+		r := kafka.NewReader(kafka.ReaderConfig{
+			Brokers:     []string{config.KafkaBroker},
+			Topic:       config.Topic,
+			GroupID:     "chatapp-backend",
+			StartOffset: kafka.LastOffset,
+			MinBytes:    1e3,
+			MaxBytes:    10e6,
+		})
+		// Inner loop reads until an error worth restarting occurs
+		consecutiveErrs := 0
+		for {
+			m, err := r.ReadMessage(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					_ = r.Close()
+					logger.Info("kafka reader context canceled")
+					return
+				}
+				// Treat EOF as an expected condition during rebalance/broker changes
+				if errors.Is(err, io.EOF) || err.Error() == "EOF" {
+					logger.Info("kafka reader EOF; recreating reader")
+					break
+				}
+				consecutiveErrs++
+				if consecutiveErrs >= 10 {
+					logger.Error("kafka read errors threshold reached; recreating reader", err, logger.FieldKV("consecutive", consecutiveErrs))
+					break
+				}
+				logger.Error("kafka transient read error", err, logger.FieldKV("consecutive", consecutiveErrs))
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			consecutiveErrs = 0
+			logger.Debug("kafka message read", logger.FieldKV("offset", m.Offset), logger.FieldKV("partition", m.Partition))
+			var msg models.Message
+			if err := json.Unmarshal(m.Value, &msg); err != nil {
+				logger.Error("kafka message unmarshal error", err)
+				continue
+			}
+			broadcast <- msg
+		}
 		if err := r.Close(); err != nil {
 			logger.Error("kafka reader close error", err)
 		}
-	}()
-	for {
-		m, err := r.ReadMessage(ctx)
-		if err != nil {
-			select {
-			case <-ctx.Done():
-				logger.Info("kafka reader context canceled")
-				return
-			default:
-				logger.Error("kafka read error", err)
-				return
-			}
+		// Small backoff before recreating reader
+		select {
+		case <-ctx.Done():
+			logger.Info("kafka reader exiting on context cancel")
+			return
+		case <-time.After(1 * time.Second):
 		}
-		logger.Debug("kafka message read", logger.FieldKV("offset", m.Offset), logger.FieldKV("partition", m.Partition))
-		var msg models.Message
-		if err := json.Unmarshal(m.Value, &msg); err != nil {
-			logger.Error("kafka message unmarshal error", err)
-			continue
-		}
-		broadcast <- msg
 	}
 }

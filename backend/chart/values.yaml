@@ -15,6 +15,9 @@ env:
   DEX_INTERNAL_ISSUER_URL: "https://ingress.local/dex"
   DEX_OIDC_FALLBACK_ENABLED: "false"
   DEX_OIDC_DEBUG: "true"
+  DEX_OIDC_INSECURE_SKIP_VERIFY: "true"
+  DEX_CLIENT_ID: "chat-app-frontend"
+  DEX_AUDIENCE: "chat-app-frontend"
 
 resources:
   limits:
